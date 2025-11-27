@@ -75,108 +75,49 @@ function App() {
         // Usa taxa_portabilidade para portabilidade
         const bancoDestino = bancos.find(b => b.codigo === bancoSelecionado);
         const taxaPort = bancoDestino?.taxa_portabilidade / 100 || 0.018;
-        const taxaNovo = bancoDestino?.taxa_novo / 100 || 0.018;
-        const prazoNovo = parseInt(prazo);
-        const listaPortRefin = response.data.map((c) => {
-          // Prazo restante: pega do backend
-          let prazoRestante = c.prazo_restante || c.parcelas_restantes || null;
-          if (prazoRestante !== null) prazoRestante = parseInt(prazoRestante);
-          // Saldo devedor: prioriza quitacao
-          let saldo = 0;
-          if (c.quitacao) {
-            saldo = parseFloat(String(c.quitacao).replace(/[^\d.,]/g, '').replace(',', '.'));
-          } else if (c.saldo_devedor) {
-            saldo = parseFloat(c.saldo_devedor);
-          } else if (c.valor_saldo) {
-            saldo = parseFloat(c.valor_saldo);
-          }
-          // VP do novo contrato (saída positiva)
-          const vpNovo = vp(taxaNovo, prazoNovo, -c.valor_parcela || 0);
-          // Valor liberado = VP novo - saldo devedor
-          const valorLiberado = vpNovo - saldo;
-          return {
-            ...c,
-            vpNovo,
-            valorLiberado,
-            saldo,
-            prazoRestante
-          };
-        });
-        setParcelasLiberam(listaPortRefin.filter(p => p.valorLiberado > 0));
-        setParcelasNaoLiberam(listaPortRefin.filter(p => p.valorLiberado <= 0));
-      }
-      setActiveTab('simulacao');
-    } catch (error) {
-      toast.error('Erro ao processar contratos');
-    }
-  };
+            // Adiciona cálculo de parcelas_restantes
+            const contratosComRestantes = response.data.map(c => ({
+              ...c,
+              parcelas_restantes: (c.parcelas_total !== undefined && c.parcelas_pagas !== undefined)
+                ? (parseInt(c.parcelas_total) - parseInt(c.parcelas_pagas))
+                : (c.parcelas_restantes !== undefined ? parseInt(c.parcelas_restantes) : null)
+            }));
+            setContratosParsed(contratosComRestantes);
+            toast.success(`${contratosComRestantes.length} contrato(s) identificado(s)`);
+            // Exibe portabilidades/refinanciamentos logo após parse
+            if (contratosComRestantes && contratosComRestantes.length > 0) {
+              // Usa taxa_portabilidade para portabilidade
+              const bancoDestino = bancos.find(b => b.codigo === bancoSelecionado);
+              const taxaPort = bancoDestino?.taxa_portabilidade / 100 || 0.018;
+              const taxaNovo = bancoDestino?.taxa_novo / 100 || 0.018;
+              const prazoNovo = parseInt(prazo);
+              const listaPortRefin = contratosComRestantes.map((c) => {
+                // Prazo restante: calcula ou pega do backend
+                let prazoRestante = c.prazo_restante || c.parcelas_restantes || null;
+                if (prazoRestante !== null) prazoRestante = parseInt(prazoRestante);
+                // Saldo devedor: prioriza quitacao
+                let saldo = 0;
+                if (c.quitacao) {
+                  saldo = parseFloat(String(c.quitacao).replace(/[^\d.,]/g, '').replace(',', '.'));
+                } else if (c.saldo_devedor) {
+                  saldo = parseFloat(c.saldo_devedor);
+                } else if (c.valor_saldo) {
+                  saldo = parseFloat(c.valor_saldo);
+                }
+                // VP do novo contrato (saída positiva)
+                const vpNovo = vp(taxaNovo, prazoNovo, -c.valor_parcela || 0);
+                // Valor liberado = VP novo - saldo devedor
+                const valorLiberado = vpNovo - saldo;
+                return {
+                  ...c,
+                  vpNovo,
+                  valorLiberado,
+                  saldo,
+                  prazoRestante,
+                  parcelas_restantes: c.parcelas_restantes
+                };
+              });
 
-  const realizarSimulacao = async () => {
-    if (contratosParsed.length === 0) {
-      toast.error('Primeiro faça o parse dos contratos');
-      return;
-    }
-
-    if (!margemDisponivel || parseFloat(margemDisponivel) <= 0) {
-      toast.error('Informe a margem disponível');
-      return;
-    }
-
-    try {
-      const response = await axios.post(`${API}/simular`, {
-        contratos: contratosParsed,
-        margem_disponivel: parseFloat(margemDisponivel),
-        valor_desejado: valorDesejado ? parseFloat(valorDesejado) : null,
-        parcela_desejada: parcelaDesejada ? parseFloat(parcelaDesejada) : null,
-        tipo_beneficio: tipoBeneficio,
-        prazo: parseInt(prazo),
-        config_margem: {
-          percentual_inss: parseFloat(percentualINSS),
-          percentual_siape: parseFloat(percentualSIAPE)
-        },
-        banco_destino: bancoSelecionado
-      });
-
-      setSimulacao(response.data);
-      toast.success('Simulação realizada com sucesso!');
-      setActiveTab('resultado');
-
-      // Identificação das parcelas que liberam crédito
-      if (response.data && response.data.portabilidades) {
-        const taxaNova = bancos.find(b => b.codigo === bancoSelecionado)?.taxa_novo / 100 || 0.018;
-        const prazoNovo = parseInt(prazo);
-        const listaLiberam = [];
-        const listaNaoLiberam = [];
-        response.data.portabilidades.forEach((p) => {
-          // VP do saldo devedor (entrada negativa)
-          const vpSaldo = vp(taxaNova, p.parcelas_restantes, -p.parcela_antiga);
-          // VP do novo contrato (saída positiva)
-          const vpNovo = vp(taxaNova, prazoNovo, -p.parcela_nova);
-          // Valor liberado = VP novo - VP saldo
-          const valorLiberado = vpNovo - vpSaldo;
-          const item = {
-            ...p,
-            vpSaldo,
-            vpNovo,
-            valorLiberado,
-            prazoRestante: p.parcelas_restantes
-          };
-          if (valorLiberado > 0) {
-            listaLiberam.push(item);
-          } else {
-            listaNaoLiberam.push(item);
-          }
-        });
-        // Ordenação conforme regras
-        listaLiberam.sort((a, b) => b.valorLiberado - a.valorLiberado);
-        listaNaoLiberam.sort((a, b) => a.prazoRestante - b.prazoRestante);
-        setParcelasLiberam(listaLiberam);
-        setParcelasNaoLiberam(listaNaoLiberam);
-      }
-    } catch (error) {
-      toast.error('Erro ao realizar simulação');
-    }
-  };
 
   const copiarTexto = () => {
     if (!simulacao) return;
