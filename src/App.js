@@ -75,8 +75,32 @@ function App() {
         const taxaNova = bancos.find(b => b.codigo === bancoSelecionado)?.taxa_novo / 100 || 0.018;
         const prazoNovo = parseInt(prazo);
         const listaPortRefin = response.data.map((c) => {
+          // Extrai prazo restante corretamente do campo "pagas / total"
+          let prazoRestante = prazoNovo;
+          if (c.pagas_total) {
+            // Exemplo: "1/96 - 95 Restantes" ou "21/84 - 63 Restantes"
+            const match = String(c.pagas_total).match(/(\d+)\s*\/\s*(\d+)/);
+            if (match) {
+              const pagas = parseInt(match[1]);
+              const total = parseInt(match[2]);
+              prazoRestante = total - pagas;
+            }
+          } else if (c.prazo_restante) {
+            prazoRestante = parseInt(c.prazo_restante);
+          } else if (c.parcelas_restantes) {
+            prazoRestante = parseInt(c.parcelas_restantes);
+          }
+          // Usa saldo correto (quitacao, saldo_devedor ou valor_saldo)
+          let saldo = 0;
+          if (c.quitacao) {
+            saldo = parseFloat(String(c.quitacao).replace(/[^\d.,]/g, '').replace(',', '.'));
+          } else if (c.saldo_devedor) {
+            saldo = parseFloat(c.saldo_devedor);
+          } else if (c.valor_saldo) {
+            saldo = parseFloat(c.valor_saldo);
+          }
           // VP do saldo devedor (entrada negativa)
-          const vpSaldo = vp(taxaNova, c.parcelas_restantes || prazoNovo, -c.valor_parcela || 0);
+          const vpSaldo = saldo;
           // VP do novo contrato (saída positiva)
           const vpNovo = vp(taxaNova, prazoNovo, -c.valor_parcela || 0);
           // Valor liberado = VP novo - VP saldo
@@ -86,7 +110,8 @@ function App() {
             vpSaldo,
             vpNovo,
             valorLiberado,
-            prazoRestante: c.parcelas_restantes || prazoNovo
+            saldo,
+            prazoRestante
           };
         });
         setParcelasLiberam(listaPortRefin.filter(p => p.valorLiberado > 0));
