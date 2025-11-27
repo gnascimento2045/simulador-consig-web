@@ -1,70 +1,100 @@
-# Getting Started with Create React App
+# Simulador de Crédito Consignado
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+> **Portabilidade • Refinanciamento • Margem Consignável**
 
-## Available Scripts
+Este projeto é um **simulador completo de crédito consignado**, permitindo calcular margem disponível, simular portabilidade, refinanciamento e valores desejados com base nos contratos informados.
 
-In the project directory, you can run:
+## 🧭 Visão Geral do Projeto
 
-### `npm start`
+Este é um simulador profissional de Crédito Consignado, desenvolvido para otimizar o trabalho de correspondentes bancários, oferecendo cálculos precisos para **portabilidade**, **refinanciamento** e **margem consignável**. O sistema permite entrada de dados essenciais, importação de contratos e geração de resultados claros e rápidos.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## 🚀 Funcionalidades
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### **1. Nome do Cliente (Opcional)**
 
-### `npm test`
+Permite digitar o nome do cliente para exibição no espelho de simulação.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### **2. Simulação de Margem**
 
-### `npm run build`
+* **Parcela (R$)** — valor da parcela desejada pelo cliente (ex: `35,38`).
+* **Prazo** — quantidade de meses para simulação (ex: `96 meses`).
+* **Banco Destino** — instituição financeira para onde será enviada a proposta.
+* **Margem Disponível (Opcional)** — caso o usuário já saiba a margem (ex: `500,00`).
+* **Valor Desejado (Opcional)** — alternativa ao campo de margem (ex: `10.000,00`).
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### **3. Importação de Contratos**
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+Campo para o usuário **colar seus contratos atuais**, permitindo:
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+* simular portabilidade;
+* calcular refinanciamento;
+* gerar nova margem;
+* consolidar informações para análise.
 
-### `npm run eject`
+## 📥 Instalação e Execução
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+Siga os passos abaixo para rodar o projeto localmente:
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### **Pré-requisitos**
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+* Node.js (versão LTS recomendada)
+* npm ou yarn instalado
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+### **Passo a passo**
 
-## Learn More
+```bash
+# Clone o repositório
+$ git clone https://github.com/seu-usuario/simulador-consignado.git
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+# Acesse a pasta do projeto
+$ cd simulador-consignado
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+# Instale as dependências
+$ npm install
+# ou
+$ yarn install
 
-### Code Splitting
+# Execute em modo de desenvolvimento
+$ npm start
+# ou
+$ yarn start
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+O projeto então ficará disponível em: `http://localhost:3000`
 
-### Analyzing the Bundle Size
+## 📌 Objetivo do Projeto
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+O simulador foi criado para facilitar e agilizar a rotina de correspondentes bancários, permitindo calcular operações de consignado de forma rápida, precisa e organizada.
 
-### Making a Progressive Web App
+## 🛠 Tecnologias Utilizadas
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+(Adicione aqui as tecnologias do seu projeto: React, Node.js, TypeScript, etc.)
 
-### Advanced Configuration
+## 📄 Como Usar
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+1. Digite o nome do cliente (opcional).
+2. Preencha o valor da parcela ou margem.
+3. Escolha o prazo.
+4. Informe o banco destino.
+5. Cole os contratos no campo indicado.
+6. Gere a simulação.
 
-### Deployment
+## 📚 Exemplos de Uso
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+* Simular portabilidade entre bancos.
+* Calcular valor liberado no refinanciamento.
+* Descobrir margem consignável disponível.
 
-### `npm run build` fails to minify
+## 📞 Suporte
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+(Adicionar caso necessário)
+
+---
+
+Caso deseje, posso gerar também:
+
+* Versão em inglês
+* README com badges
+* README com imagens
+* Estrutura de pastas
+* Passo a passo de instalação
