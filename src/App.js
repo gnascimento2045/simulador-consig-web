@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { vp } from './lib/utils';
 import './App.css';
 import axios from 'axios';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
@@ -32,6 +33,9 @@ function App() {
   const [percentualINSS, setPercentualINSS] = useState('35');
   const [percentualSIAPE, setPercentualSIAPE] = useState('35');
   const [simulacao, setSimulacao] = useState(null);
+  // Novas listas para parcelas que liberam crédito e que não liberam
+  const [parcelasLiberam, setParcelasLiberam] = useState([]);
+  const [parcelasNaoLiberam, setParcelasNaoLiberam] = useState([]);
   const [nomeCliente, setNomeCliente] = useState('');
   const [editandoBancos, setEditandoBancos] = useState(false);
   const [bancosEditados, setBancosEditados] = useState([]);
@@ -64,9 +68,30 @@ function App() {
       const response = await axios.post(`${API}/parse-contratos`, {
         texto: textoContratos
       });
-      
       setContratosParsed(response.data);
       toast.success(`${response.data.length} contrato(s) identificado(s)`);
+      // Exibe portabilidades/refinanciamentos logo após parse
+      if (response.data && response.data.length > 0) {
+        const taxaNova = bancos.find(b => b.codigo === bancoSelecionado)?.taxa_novo / 100 || 0.018;
+        const prazoNovo = parseInt(prazo);
+        const listaPortRefin = response.data.map((c) => {
+          // VP do saldo devedor (entrada negativa)
+          const vpSaldo = vp(taxaNova, c.parcelas_restantes || prazoNovo, -c.valor_parcela || 0);
+          // VP do novo contrato (saída positiva)
+          const vpNovo = vp(taxaNova, prazoNovo, -c.valor_parcela || 0);
+          // Valor liberado = VP novo - VP saldo
+          const valorLiberado = vpNovo - vpSaldo;
+          return {
+            ...c,
+            vpSaldo,
+            vpNovo,
+            valorLiberado,
+            prazoRestante: c.parcelas_restantes || prazoNovo
+          };
+        });
+        setParcelasLiberam(listaPortRefin.filter(p => p.valorLiberado > 0));
+        setParcelasNaoLiberam(listaPortRefin.filter(p => p.valorLiberado <= 0));
+      }
       setActiveTab('simulacao');
     } catch (error) {
       toast.error('Erro ao processar contratos');
@@ -102,6 +127,39 @@ function App() {
       setSimulacao(response.data);
       toast.success('Simulação realizada com sucesso!');
       setActiveTab('resultado');
+
+      // Identificação das parcelas que liberam crédito
+      if (response.data && response.data.portabilidades) {
+        const taxaNova = bancos.find(b => b.codigo === bancoSelecionado)?.taxa_novo / 100 || 0.018;
+        const prazoNovo = parseInt(prazo);
+        const listaLiberam = [];
+        const listaNaoLiberam = [];
+        response.data.portabilidades.forEach((p) => {
+          // VP do saldo devedor (entrada negativa)
+          const vpSaldo = vp(taxaNova, p.parcelas_restantes, -p.parcela_antiga);
+          // VP do novo contrato (saída positiva)
+          const vpNovo = vp(taxaNova, prazoNovo, -p.parcela_nova);
+          // Valor liberado = VP novo - VP saldo
+          const valorLiberado = vpNovo - vpSaldo;
+          const item = {
+            ...p,
+            vpSaldo,
+            vpNovo,
+            valorLiberado,
+            prazoRestante: p.parcelas_restantes
+          };
+          if (valorLiberado > 0) {
+            listaLiberam.push(item);
+          } else {
+            listaNaoLiberam.push(item);
+          }
+        });
+        // Ordenação conforme regras
+        listaLiberam.sort((a, b) => b.valorLiberado - a.valorLiberado);
+        listaNaoLiberam.sort((a, b) => a.prazoRestante - b.prazoRestante);
+        setParcelasLiberam(listaLiberam);
+        setParcelasNaoLiberam(listaNaoLiberam);
+      }
     } catch (error) {
       toast.error('Erro ao realizar simulação');
     }
@@ -292,7 +350,7 @@ R$ 215,49
                     <h3 className="font-semibold mb-3 text-lg" data-testid="parsed-count">Contratos Identificados: {contratosParsed.length}</h3>
                     <div className="space-y-3">
                       {contratosParsed.map((c, idx) => (
-                        <Card key={idx} className="bg-gradient-to-r from-blue-50 to-indigo-50" data-testid={`contrato-item-${idx}`}>
+                        <Card key={idx} className="bg-gradient-to-r from-blue-50 to-indigo-50" data-testid={`contrato-item-${idx}`}> 
                           <CardContent className="pt-4">
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                               <div>
@@ -315,6 +373,91 @@ R$ 215,49
                           </CardContent>
                         </Card>
                       ))}
+                    </div>
+                    {/* NOVO: Exibe resultado das portabilidades/refinanciamentos logo após parse */}
+                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <Card className="border-green-400">
+                        <CardHeader className="bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+                          <CardTitle className="text-lg text-center">Parcelas que liberam crédito</CardTitle>
+                        </CardHeader>
+                        <CardContent className="pt-4">
+                          {parcelasLiberam.length > 0 ? (
+                            <div className="space-y-3">
+                              {parcelasLiberam.map((p, idx) => (
+                                <Card key={idx} className="border-l-4 border-l-green-500 bg-green-50">
+                                  <CardContent className="pt-2">
+                                    <div className="grid grid-cols-2 gap-2 text-sm">
+                                      <div>
+                                        <span className="text-gray-600">Banco Origem:</span>
+                                        <p className="font-semibold">{p.banco}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Contrato:</span>
+                                        <p className="font-semibold">{p.contrato}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Saldo Devedor:</span>
+                                        <p className="font-semibold text-blue-700">R$ {p.saldo_devedor?.toFixed(2)}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Valor Liberado:</span>
+                                        <p className="font-semibold text-green-700">R$ {p.valorLiberado?.toFixed(2)}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Prazo Restante:</span>
+                                        <p className="font-semibold">{p.prazoRestante} meses</p>
+                                      </div>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-center text-green-700">Nenhuma parcela libera crédito.</div>
+                          )}
+                        </CardContent>
+                      </Card>
+                      <Card className="border-red-400">
+                        <CardHeader className="bg-gradient-to-r from-red-600 to-rose-600 text-white">
+                          <CardTitle className="text-lg text-center">Parcelas que NÃO liberam crédito</CardTitle>
+                        </CardHeader>
+                        <CardContent className="pt-4">
+                          {parcelasNaoLiberam.length > 0 ? (
+                            <div className="space-y-3">
+                              {parcelasNaoLiberam.map((p, idx) => (
+                                <Card key={idx} className="border-l-4 border-l-red-500 bg-red-50">
+                                  <CardContent className="pt-2">
+                                    <div className="grid grid-cols-2 gap-2 text-sm">
+                                      <div>
+                                        <span className="text-gray-600">Banco Origem:</span>
+                                        <p className="font-semibold">{p.banco}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Contrato:</span>
+                                        <p className="font-semibold">{p.contrato}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Saldo Devedor:</span>
+                                        <p className="font-semibold text-blue-700">R$ {p.saldo_devedor?.toFixed(2)}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Valor Liberado:</span>
+                                        <p className="font-semibold text-red-700">R$ {p.valorLiberado?.toFixed(2)}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Prazo Restante:</span>
+                                        <p className="font-semibold">{p.prazoRestante} meses</p>
+                                      </div>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-center text-red-700">Todas as parcelas liberam crédito.</div>
+                          )}
+                        </CardContent>
+                      </Card>
                     </div>
                   </div>
                 )}
@@ -471,8 +614,95 @@ R$ 215,49
                   </CardContent>
                 </Card>
 
-                {/* Espelho da Simulação */}
+                {/* NOVO: Parcelas que liberam crédito */}
+                <Card className="shadow-2xl border-green-400">
+                  <CardHeader className="bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+                    <CardTitle className="text-xl text-center">Parcelas que liberam crédito</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6">
+                    {parcelasLiberam.length > 0 ? (
+                      <div className="space-y-3">
+                        {parcelasLiberam.map((p, idx) => (
+                          <Card key={idx} className="border-l-4 border-l-green-500 bg-green-50">
+                            <CardContent className="pt-4">
+                              <div className="grid md:grid-cols-5 gap-4 text-sm">
+                                <div>
+                                  <span className="text-gray-600">Banco Origem:</span>
+                                  <p className="font-semibold">{p.banco_origem}</p>
+                                </div>
+                                <div>
+                                  <span className="text-gray-600">Contrato:</span>
+                                  <p className="font-semibold">{p.contrato}</p>
+                                </div>
+                                <div>
+                                  <span className="text-gray-600">Saldo Devedor:</span>
+                                  <p className="font-semibold text-blue-700">R$ {p.saldo_devedor.toFixed(2)}</p>
+                                </div>
+                                <div>
+                                  <span className="text-gray-600">Valor Liberado:</span>
+                                  <p className="font-semibold text-green-700">R$ {p.valorLiberado.toFixed(2)}</p>
+                                </div>
+                                <div>
+                                  <span className="text-gray-600">Prazo Restante:</span>
+                                  <p className="font-semibold">{p.prazoRestante} meses</p>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center text-green-700">Nenhuma parcela libera crédito.</div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* NOVO: Parcelas que NÃO liberam crédito */}
+                <Card className="shadow-2xl border-red-400">
+                  <CardHeader className="bg-gradient-to-r from-red-600 to-rose-600 text-white">
+                    <CardTitle className="text-xl text-center">Parcelas que NÃO liberam crédito</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6">
+                    {parcelasNaoLiberam.length > 0 ? (
+                      <div className="space-y-3">
+                        {parcelasNaoLiberam.map((p, idx) => (
+                          <Card key={idx} className="border-l-4 border-l-red-500 bg-red-50">
+                            <CardContent className="pt-4">
+                              <div className="grid md:grid-cols-5 gap-4 text-sm">
+                                <div>
+                                  <span className="text-gray-600">Banco Origem:</span>
+                                  <p className="font-semibold">{p.banco_origem}</p>
+                                </div>
+                                <div>
+                                  <span className="text-gray-600">Contrato:</span>
+                                  <p className="font-semibold">{p.contrato}</p>
+                                </div>
+                                <div>
+                                  <span className="text-gray-600">Saldo Devedor:</span>
+                                  <p className="font-semibold text-blue-700">R$ {p.saldo_devedor.toFixed(2)}</p>
+                                </div>
+                                <div>
+                                  <span className="text-gray-600">Valor Liberado:</span>
+                                  <p className="font-semibold text-red-700">R$ {p.valorLiberado.toFixed(2)}</p>
+                                </div>
+                                <div>
+                                  <span className="text-gray-600">Prazo Restante:</span>
+                                  <p className="font-semibold">{p.prazoRestante} meses</p>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center text-red-700">Todas as parcelas liberam crédito.</div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* ...existing code... (Espelho da Simulação, Informações Adicionais, etc) */}
                 <Card ref={simulacaoRef} className="shadow-2xl" data-testid="espelho-simulacao">
+                  {/* ...existing code... */}
                   <CardHeader className="bg-gradient-to-r from-blue-700 to-indigo-700 text-white">
                     <CardTitle className="text-2xl text-center" data-testid="espelho-title">ESPELHO DA SIMULAÇÃO</CardTitle>
                     <CardDescription className="text-blue-100 text-center" data-testid="espelho-subtitle">
@@ -480,134 +710,7 @@ R$ 215,49
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-6">
-                    {/* Resumo Geral */}
-                    <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
-                      <Card className="bg-gradient-to-br from-green-50 to-emerald-50 border-green-200">
-                        <CardContent className="pt-6">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-sm text-gray-600" data-testid="label-valor-liberado">Valor Liberado</p>
-                              <p className="text-2xl font-bold text-green-700" data-testid="valor-liberado">
-                                R$ {simulacao.valor_total_liberado.toFixed(2)}
-                              </p>
-                            </div>
-                            <DollarSign className="w-10 h-10 text-green-600 opacity-20" />
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200">
-                        <CardContent className="pt-6">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-sm text-gray-600" data-testid="label-economia-mensal">Economia Mensal</p>
-                              <p className="text-2xl font-bold text-blue-700" data-testid="economia-mensal">
-                                R$ {simulacao.economia_total_mensal.toFixed(2)}
-                              </p>
-                            </div>
-                            <TrendingDown className="w-10 h-10 text-blue-600 opacity-20" />
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      <Card className="bg-gradient-to-br from-purple-50 to-violet-50 border-purple-200">
-                        <CardContent className="pt-6">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-sm text-gray-600" data-testid="label-nova-parcela">Nova Parcela Total</p>
-                              <p className="text-2xl font-bold text-purple-700" data-testid="nova-parcela-total">
-                                R$ {simulacao.nova_parcela_total.toFixed(2)}
-                              </p>
-                            </div>
-                            <Banknote className="w-10 h-10 text-purple-600 opacity-20" />
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      <Card className="bg-gradient-to-br from-orange-50 to-amber-50 border-orange-200">
-                        <CardContent className="pt-6">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-sm text-gray-600" data-testid="label-margem-restante">Margem Restante</p>
-                              <p className="text-2xl font-bold text-orange-700" data-testid="margem-restante">
-                                R$ {simulacao.margem_restante.toFixed(2)}
-                              </p>
-                            </div>
-                            <Calculator className="w-10 h-10 text-orange-600 opacity-20" />
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-
-                    <Separator />
-
-                    {/* Portabilidades */}
-                    {simulacao.portabilidades.length > 0 && (
-                      <div data-testid="portabilidades-section">
-                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2" data-testid="portabilidades-title">
-                          <TrendingDown className="w-5 h-5" />
-                          Portabilidades ({simulacao.portabilidades.length})
-                        </h3>
-                        <div className="space-y-3">
-                          {simulacao.portabilidades.map((p, idx) => (
-                            <Card key={idx} className="border-l-4 border-l-blue-500" data-testid={`portabilidade-item-${idx}`}>
-                              <CardContent className="pt-4">
-                                <div className="grid md:grid-cols-3 gap-4">
-                                  <div>
-                                    <p className="text-xs text-gray-600">Banco Origem</p>
-                                    <p className="font-semibold text-sm" data-testid={`port-banco-${idx}`}>{p.banco_origem}</p>
-                                    <p className="text-xs text-gray-500" data-testid={`port-contrato-${idx}`}>{p.contrato}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-xs text-gray-600">Saldo / Taxa</p>
-                                    <p className="font-semibold text-sm" data-testid={`port-saldo-${idx}`}>R$ {p.saldo_devedor.toFixed(2)}</p>
-                                    <p className="text-xs" data-testid={`port-taxa-${idx}`}>{p.taxa_antiga}% → {p.taxa_nova}%</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-xs text-gray-600">Parcela / Economia</p>
-                                    <p className="font-semibold text-sm" data-testid={`port-parcela-${idx}`}>R$ {p.parcela_antiga.toFixed(2)} → R$ {p.parcela_nova.toFixed(2)}</p>
-                                    <Badge className="mt-1 bg-green-100 text-green-800" data-testid={`port-economia-${idx}`}>
-                                      -R$ {p.economia_mensal.toFixed(2)}/mês
-                                    </Badge>
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <Separator />
-
-                    {/* Informações Adicionais */}
-                    <div className="bg-gradient-to-r from-slate-50 to-gray-50 p-6 rounded-lg">
-                      <h4 className="font-semibold mb-3" data-testid="info-adicionais-title">Informações Adicionais</h4>
-                      <div className="grid md:grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="text-gray-600">Banco Destino:</span>
-                          <span className="ml-2 font-semibold" data-testid="info-banco-destino">
-                            {bancos.find(b => b.codigo === bancoSelecionado)?.nome || 'N/A'}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-gray-600">Prazo:</span>
-                          <span className="ml-2 font-semibold" data-testid="info-prazo">{prazo} meses</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-600">CET Aproximado:</span>
-                          <span className="ml-2 font-semibold" data-testid="info-cet">{simulacao.cet_aproximado.toFixed(2)}% a.a.</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-600">Tipo Benefício:</span>
-                          <span className="ml-2 font-semibold" data-testid="info-tipo-beneficio">{tipoBeneficio}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="text-center text-xs text-gray-500 pt-4" data-testid="disclaimer">
-                      * Valores aproximados. Sujeito à aprovação do banco.
-                    </div>
+                    {/* ...existing code... */}
                   </CardContent>
                 </Card>
               </div>
