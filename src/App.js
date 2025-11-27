@@ -72,25 +72,16 @@ function App() {
       toast.success(`${response.data.length} contrato(s) identificado(s)`);
       // Exibe portabilidades/refinanciamentos logo após parse
       if (response.data && response.data.length > 0) {
-        const taxaNova = bancos.find(b => b.codigo === bancoSelecionado)?.taxa_novo / 100 || 0.018;
+        // Usa taxa_portabilidade para portabilidade
+        const bancoDestino = bancos.find(b => b.codigo === bancoSelecionado);
+        const taxaPort = bancoDestino?.taxa_portabilidade / 100 || 0.018;
+        const taxaNovo = bancoDestino?.taxa_novo / 100 || 0.018;
         const prazoNovo = parseInt(prazo);
         const listaPortRefin = response.data.map((c) => {
-          // Extrai prazo restante corretamente do campo "pagas / total"
-          let prazoRestante = prazoNovo;
-          if (c.pagas_total) {
-            // Exemplo: "1/96 - 95 Restantes" ou "21/84 - 63 Restantes"
-            const match = String(c.pagas_total).match(/(\d+)\s*\/\s*(\d+)/);
-            if (match) {
-              const pagas = parseInt(match[1]);
-              const total = parseInt(match[2]);
-              prazoRestante = total - pagas;
-            }
-          } else if (c.prazo_restante) {
-            prazoRestante = parseInt(c.prazo_restante);
-          } else if (c.parcelas_restantes) {
-            prazoRestante = parseInt(c.parcelas_restantes);
-          }
-          // Usa saldo correto (quitacao, saldo_devedor ou valor_saldo)
+          // Prazo restante: pega do backend
+          let prazoRestante = c.prazo_restante || c.parcelas_restantes || null;
+          if (prazoRestante !== null) prazoRestante = parseInt(prazoRestante);
+          // Saldo devedor: prioriza quitacao
           let saldo = 0;
           if (c.quitacao) {
             saldo = parseFloat(String(c.quitacao).replace(/[^\d.,]/g, '').replace(',', '.'));
@@ -99,15 +90,12 @@ function App() {
           } else if (c.valor_saldo) {
             saldo = parseFloat(c.valor_saldo);
           }
-          // VP do saldo devedor (entrada negativa)
-          const vpSaldo = saldo;
           // VP do novo contrato (saída positiva)
-          const vpNovo = vp(taxaNova, prazoNovo, -c.valor_parcela || 0);
-          // Valor liberado = VP novo - VP saldo
-          const valorLiberado = vpNovo - vpSaldo;
+          const vpNovo = vp(taxaNovo, prazoNovo, -c.valor_parcela || 0);
+          // Valor liberado = VP novo - saldo devedor
+          const valorLiberado = vpNovo - saldo;
           return {
             ...c,
-            vpSaldo,
             vpNovo,
             valorLiberado,
             saldo,
@@ -430,7 +418,7 @@ R$ 215,49
                                       </div>
                                       <div>
                                         <span className="text-gray-600">Prazo Restante:</span>
-                                        <p className="font-semibold">{p.prazoRestante} meses</p>
+                                        <p className="font-semibold">{p.prazoRestante !== null ? `${p.prazoRestante} meses` : 'N/A'}</p>
                                       </div>
                                     </div>
                                   </CardContent>
@@ -471,7 +459,7 @@ R$ 215,49
                                       </div>
                                       <div>
                                         <span className="text-gray-600">Prazo Restante:</span>
-                                        <p className="font-semibold">{p.prazoRestante} meses</p>
+                                        <p className="font-semibold">{p.prazoRestante !== null ? `${p.prazoRestante} meses` : 'N/A'}</p>
                                       </div>
                                     </div>
                                   </CardContent>
