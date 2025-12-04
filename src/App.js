@@ -198,7 +198,7 @@ function App() {
     }
 
     const bancoDestino = bancos.find(b => b.codigo === bancoSelecionado);
-    const nomeBanco = bancoDestino ? bancoDestino.nome : 'Banco XP';
+    const nomeBanco = bancoDestino ? bancoDestino.nome : 'Banco Banrisul';
 
     let texto = `*Portabilidade para o ${nomeBanco} – Renovação em 96 meses!*\n\n`;
     texto += `📅 *Prazo para pagamento: Até 10 dias úteis*\n\n`;
