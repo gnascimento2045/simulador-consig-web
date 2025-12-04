@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { Calculator, TrendingUp, TrendingDown, Copy } from 'lucide-react';
+import { Calculator, TrendingUp, TrendingDown, Copy, Settings } from 'lucide-react';
+import html2canvas from 'html2canvas';
 
 const BACKEND_URL = process.env.REACT_APP_API_URL;
 const API = `${BACKEND_URL}/api`;
@@ -31,15 +32,43 @@ function App() {
   const [contratosLiberam, setContratosLiberam] = useState([]);
   const [contratosNaoLiberam, setContratosNaoLiberam] = useState([]);
   const [valorLiberadoTotal, setValorLiberadoTotal] = useState(0);
+  const [contratosExcluidos, setContratosExcluidos] = useState(new Set());
+  const [modalConfigAberto, setModalConfigAberto] = useState(false);
+  const [taxaNovo, setTaxaNovo] = useState(() => localStorage.getItem('taxaNovo') || '1.80');
+  const [taxaRefin, setTaxaRefin] = useState(() => localStorage.getItem('taxaRefin') || '1.50');
+  const [taxaPortabilidade, setTaxaPortabilidade] = useState(() => localStorage.getItem('taxaPortabilidade') || '1.50');
+
+  // Adiciona CSS para esconder botões e coluna 'Incluir' só na captura
+  useEffect(() => {
+    if (!document.getElementById('print-espelho-style')) {
+      const style = document.createElement('style');
+      style.id = 'print-espelho-style';
+      style.innerHTML = `
+        .print-espelho .btn-copiar-simulacao,
+        .print-espelho .btn-copiar-imagem,
+        .print-espelho th:first-child,
+        .print-espelho td:first-child {
+          display: none !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  }, []);
 
   // Carrega bancos ao iniciar
   useEffect(() => {
     const carregarBancos = async () => {
       try {
         const response = await axios.get(`${API}/bancos`);
-        setBancos(response.data);
-        if (response.data.length > 0) {
-          setBancoSelecionado(response.data[0].codigo);
+        const bancosData = response.data;
+        setBancos(bancosData);
+        
+        // Define Banrisul como padrão se existir, senão pega o primeiro
+        const banrisul = bancosData.find(b => b.nome.toLowerCase().includes('banrisul'));
+        if (banrisul) {
+          setBancoSelecionado(banrisul.codigo);
+        } else if (bancosData.length > 0) {
+          setBancoSelecionado(bancosData[0].codigo);
         }
       } catch (error) {
         toast.error('Erro ao carregar bancos');
@@ -51,11 +80,9 @@ function App() {
 
   // Calcula valor liberado aproximado baseado na parcela e prazo
   const calcularValorLiberadoAproximado = () => {
-    if (!parcela || !bancoSelecionado) return 0;
-    const banco = bancos.find(b => b.codigo === bancoSelecionado);
-    if (!banco) return 0;
+    if (!parcela) return 0;
 
-    const taxa = banco.taxa_refin / 100;
+    const taxa = parseFloat(taxaNovo) / 100;
     const n = parseInt(prazo);
     const parcelaNum = parseFloat(parcela);
     
@@ -68,7 +95,10 @@ function App() {
   const processarContratos = useCallback(async () => {
     try {
       const response = await axios.post(`${API}/parse-contratos`, {
-        texto: textoContratos
+        texto: textoContratos,
+        taxa_novo: parseFloat(taxaNovo),
+        taxa_refin: parseFloat(taxaRefin),
+        taxa_portabilidade: parseFloat(taxaPortabilidade)
       });
 
       const contratos = response.data;
@@ -77,10 +107,7 @@ function App() {
         return;
       }
 
-      const bancoDestino = bancos.find(b => b.codigo === bancoSelecionado);
-      if (!bancoDestino) return;
-
-      const taxaRefin = bancoDestino.taxa_refin / 100;
+      const taxaRefinCalc = parseFloat(taxaRefin) / 100;
       const prazoNovo = 96; // Sempre 96 meses conforme especificação
 
       const contratosProcessados = contratos.map(c => {
@@ -106,7 +133,7 @@ function App() {
         
         // Calcula VP do novo contrato (96 meses, taxa refin, mantém a parcela)
         // VP = PMT × [(1 - (1 + i)^-n) / i]
-        const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefin, -prazoNovo)) / taxaRefin);
+        const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
         
         // Valor disponível/liberado = VP novo - Saldo devedor
         const valorDisponivel = vpNovo - saldoDevedor;
@@ -135,8 +162,10 @@ function App() {
       setContratosLiberam(liberam);
       setContratosNaoLiberam(naoLiberam);
 
-      // Calcula valor total liberado
-      const totalLiberado = liberam.reduce((sum, c) => sum + c.valorDisponivel, 0);
+      // Calcula valor total liberado (excluindo contratos desmarcados)
+      const totalLiberado = liberam
+        .filter((c, idx) => !contratosExcluidos.has(`libera-${idx}`))
+        .reduce((sum, c) => sum + c.valorDisponivel, 0);
       setValorLiberadoTotal(totalLiberado);
 
       toast.success(`${contratos.length} contrato(s) processado(s)`);
@@ -144,12 +173,12 @@ function App() {
       console.error('Erro ao processar contratos:', error);
       toast.error('Erro ao processar contratos');
     }
-  }, [bancoSelecionado, bancos, textoContratos]);
+  }, [textoContratos, taxaNovo, taxaRefin, taxaPortabilidade, contratosExcluidos]);
 
   // Processa contratos automaticamente quando o texto muda
   useEffect(() => {
     const processarAutomaticamente = async () => {
-      if (textoContratos.trim() && bancoSelecionado && bancos.length > 0) {
+      if (textoContratos.trim()) {
         await processarContratos();
       } else {
         setContratosLiberam([]);
@@ -174,11 +203,13 @@ function App() {
     let texto = `*Portabilidade para o ${nomeBanco} – Renovação em 96 meses!*\n\n`;
     texto += `📅 *Prazo para pagamento: Até 10 dias úteis*\n\n`;
 
-    contratosLiberam.forEach((contrato, index) => {
+    const contratosIncluidos = contratosLiberam.filter((c, idx) => !contratosExcluidos.has(`libera-${idx}`));
+
+    contratosIncluidos.forEach((contrato, index) => {
       texto += `🔹 ${contrato.banco.toUpperCase()}\n`;
       texto += `▫️ Parcela: R$ ${formatarMoeda(contrato.parcelaAtual)}\n`;
       texto += `▫️ *Valor liberado aproximado: R$ ${formatarMoeda(contrato.valorDisponivel)}*\n`;
-      if (index < contratosLiberam.length - 1) {
+      if (index < contratosIncluidos.length - 1) {
         texto += `\n`;
       }
     });
@@ -192,17 +223,167 @@ function App() {
     });
   };
 
+  // Função para toggle incluir/excluir contrato do cálculo
+  const toggleContratoExcluido = (id) => {
+    setContratosExcluidos(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  // Função para copiar simulação de margem livre
+  const copiarSimulacaoMargem = () => {
+    if (!parcela || !prazo) {
+      toast.error('Preencha a parcela e o prazo');
+      return;
+    }
+
+    const valorLiberado = calcularValorLiberadoAproximado();
+    const bancoDestino = bancos.find(b => b.codigo === bancoSelecionado);
+    const nomeBanco = bancoDestino ? bancoDestino.nome : 'Banco';
+
+    let texto = `*Simulação de Margem Livre*\n\n`;
+    texto += `💵 *Parcela:* R$ ${formatarMoeda(parseFloat(parcela))}\n`;
+    texto += `📅 *Prazo:* ${prazo} meses\n`;
+    texto += `🟢 *Valor Liberado Aproximado: R$ ${formatarMoeda(valorLiberado)}*`;
+
+    navigator.clipboard.writeText(texto).then(() => {
+      toast.success('Simulação de margem copiada!');
+    }).catch(() => {
+      toast.error('Erro ao copiar simulação');
+    });
+  };
+
+  // Função para copiar imagem do espelho da oferta sem botões e sem coluna 'Incluir'
+  const copiarImagemEspelho = () => {
+    const wrapper = document.getElementById('espelho-oferta');
+    if (!wrapper) {
+      toast.error('Tabela não encontrada!');
+      return;
+    }
+    wrapper.classList.add('print-espelho');
+    html2canvas(wrapper, { backgroundColor: '#fff', scale: 2 }).then(canvas => {
+      wrapper.classList.remove('print-espelho');
+      canvas.toBlob(blob => {
+        if (navigator.clipboard && window.ClipboardItem) {
+          navigator.clipboard.write([
+            new window.ClipboardItem({ 'image/png': blob })
+          ]).then(() => {
+            toast.success('Imagem copiada!');
+          }).catch(() => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'oferta.png';
+            a.click();
+            URL.revokeObjectURL(url);
+            toast.success('Imagem baixada!');
+          });
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'oferta.png';
+          a.click();
+          URL.revokeObjectURL(url);
+          toast.success('Imagem baixada!');
+        }
+      });
+    });
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
       <Toaster />
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent mb-3" data-testid="main-heading">
-            Simulador de Crédito Consignado
-          </h1>
+          <div className="flex items-center justify-center gap-4 mb-3">
+            <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent" data-testid="main-heading">
+              Simulador de Crédito Consignado
+            </h1>
+            <Button
+              onClick={() => setModalConfigAberto(true)}
+              variant="outline"
+              className="mt-2"
+              data-testid="btn-config-taxas"
+            >
+              <Settings className="w-5 h-5" />
+            </Button>
+          </div>
           <p className="text-gray-600 text-lg" data-testid="subtitle">Portabilidade • Refinanciamento • Margem Consignável</p>
         </div>
+
+        {/* Modal de Configurações de Taxas */}
+        {modalConfigAberto && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setModalConfigAberto(false)}>
+            <Card className="w-full max-w-md mx-4 bg-white" onClick={(e) => e.stopPropagation()}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="w-5 h-5" />
+                  Configurações de Taxas
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="taxa-novo">Taxa NOVO (Margem) %</Label>
+                  <Input
+                    id="taxa-novo"
+                    type="number"
+                    step="0.001"
+                    value={taxaNovo}
+                    onChange={(e) => {
+                      setTaxaNovo(e.target.value);
+                      localStorage.setItem('taxaNovo', e.target.value);
+                    }}
+                    placeholder="Ex: 1.80"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="taxa-refin">Taxa Refinanciamento %</Label>
+                  <Input
+                    id="taxa-refin"
+                    type="number"
+                    step="0.001"
+                    value={taxaRefin}
+                    onChange={(e) => {
+                      setTaxaRefin(e.target.value);
+                      localStorage.setItem('taxaRefin', e.target.value);
+                    }}
+                    placeholder="Ex: 1.50"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="taxa-portabilidade">Taxa Portabilidade %</Label>
+                  <Input
+                    id="taxa-portabilidade"
+                    type="number"
+                    step="0.001"
+                    value={taxaPortabilidade}
+                    onChange={(e) => {
+                      setTaxaPortabilidade(e.target.value);
+                      localStorage.setItem('taxaPortabilidade', e.target.value);
+                    }}
+                    placeholder="Ex: 1.50"
+                  />
+                </div>
+                <div className="flex gap-2 pt-4">
+                  <Button onClick={() => setModalConfigAberto(false)} className="flex-1">
+                    Salvar
+                  </Button>
+                  <Button onClick={() => setModalConfigAberto(false)} variant="outline" className="flex-1">
+                    Fechar
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         <div className="space-y-6">
           {/* Seção 1: Nome do Cliente */}
@@ -247,10 +428,10 @@ function App() {
                 <div className="space-y-2">
                   <Label htmlFor="prazo" data-testid="label-prazo">Prazo</Label>
                   <Select value={prazo} onValueChange={setPrazo}>
-                    <SelectTrigger data-testid="select-prazo">
+                    <SelectTrigger data-testid="select-prazo" className="bg-white">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="bg-white">
                       <SelectItem value="96" data-testid="option-prazo-96">96 meses</SelectItem>
                       <SelectItem value="84" data-testid="option-prazo-84">84 meses</SelectItem>
                       <SelectItem value="72" data-testid="option-prazo-72">72 meses</SelectItem>
@@ -263,10 +444,10 @@ function App() {
                 <div className="space-y-2">
                   <Label htmlFor="banco-destino" data-testid="label-banco-destino">Banco Destino</Label>
                   <Select value={bancoSelecionado} onValueChange={setBancoSelecionado}>
-                    <SelectTrigger data-testid="select-banco-destino">
+                    <SelectTrigger data-testid="select-banco-destino" className="bg-white">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="bg-white">
                       {bancos.map(b => (
                         <SelectItem key={b.codigo} value={b.codigo} data-testid={`option-banco-${b.codigo}`}>
                           {b.nome}
@@ -285,9 +466,19 @@ function App() {
                       <TrendingUp className="w-8 h-8 text-green-600" />
                       <span className="text-lg font-medium text-gray-700">Valor Liberado Aproximado:</span>
                     </div>
-                    <span className="text-3xl font-bold text-green-700" data-testid="valor-liberado-aproximado">
-                      R$ {formatarMoeda(calcularValorLiberadoAproximado())}
-                    </span>
+                    <div className="flex items-center gap-4">
+                      <span className="text-3xl font-bold text-green-700" data-testid="valor-liberado-aproximado">
+                        R$ {formatarMoeda(calcularValorLiberadoAproximado())}
+                      </span>
+                      <Button
+                        onClick={copiarSimulacaoMargem}
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                        data-testid="btn-copiar-margem"
+                      >
+                        <Copy className="w-4 h-4 mr-2" />
+                        Copiar Simulação
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -331,6 +522,7 @@ R$ 215,49
           {/* Seção 4: Contratos que LIBERAM crédito */}
           {contratosLiberam.length > 0 && (
             <Card className="shadow-xl border-green-400">
+              <div id="espelho-oferta">
               <CardHeader className="bg-gradient-to-r from-green-600 to-emerald-600 text-white">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-xl flex items-center gap-2" data-testid="contratos-liberam-title">
@@ -343,20 +535,29 @@ R$ 215,49
                     </span>
                     <Button 
                       onClick={copiarSimulacao}
-                      className="bg-white text-green-700 hover:bg-green-50 font-semibold"
+                      className="bg-white text-green-700 hover:bg-green-50 font-semibold btn-copiar-simulacao"
                       data-testid="btn-copiar-simulacao"
                     >
                       <Copy className="w-4 h-4 mr-2" />
                       Copiar Simulação
                     </Button>
+                    <Button
+                      onClick={copiarImagemEspelho}
+                      className="bg-white text-green-700 hover:bg-green-50 font-semibold btn-copiar-imagem"
+                      data-testid="btn-copiar-imagem"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" /></svg>
+                      Copiar Imagem
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="pt-6">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm" data-testid="tabela-contratos-liberam">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm" data-testid="tabela-contratos-liberam">
                     <thead>
                       <tr className="border-b-2 border-green-300">
+                        <th className="text-center py-3 px-2 font-semibold">Incluir</th>
                         <th className="text-left py-3 px-2 font-semibold">Banco</th>
                         <th className="text-left py-3 px-2 font-semibold">Nº Contrato</th>
                         <th className="text-right py-3 px-2 font-semibold">Parcela</th>
@@ -366,8 +567,19 @@ R$ 215,49
                       </tr>
                     </thead>
                     <tbody>
-                      {contratosLiberam.map((c, idx) => (
-                        <tr key={idx} className="border-b hover:bg-green-50" data-testid={`contrato-libera-${idx}`}>
+                      {contratosLiberam.map((c, idx) => {
+                        const contratoId = `libera-${idx}`;
+                        const isExcluido = contratosExcluidos.has(contratoId);
+                        return (
+                        <tr key={idx} className={`border-b hover:bg-green-50 ${isExcluido ? 'opacity-50' : ''}`} data-testid={`contrato-libera-${idx}`}>
+                          <td className="py-3 px-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={!isExcluido}
+                              onChange={() => toggleContratoExcluido(contratoId)}
+                              className="w-4 h-4 cursor-pointer"
+                            />
+                          </td>
                           <td className="py-3 px-2" data-testid={`contrato-libera-banco-${idx}`}>{c.banco}</td>
                           <td className="py-3 px-2 font-mono text-xs" data-testid={`contrato-libera-numero-${idx}`}>{c.contrato}</td>
                           <td className="py-3 px-2 text-right text-purple-700 font-bold" data-testid={`contrato-libera-parcela-${idx}`}>
@@ -381,11 +593,13 @@ R$ 215,49
                             R$ {formatarMoeda(c.valorDisponivel)}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </CardContent>
+              </div>
             </Card>
           )}
 
