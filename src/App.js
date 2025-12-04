@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { vp } from './lib/utils';
 import './App.css';
 import axios from 'axios';
 import { Button } from './components/ui/button';
@@ -10,10 +9,15 @@ import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { Calculator, TrendingUp, TrendingDown } from 'lucide-react';
+import { Calculator, TrendingUp, TrendingDown, Copy } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_API_URL;
 const API = `${BACKEND_URL}/api`;
+
+// Função para formatar valores em padrão brasileiro
+const formatarMoeda = (valor) => {
+  return valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 
 function App() {
   const [nomeCliente, setNomeCliente] = useState('');
@@ -120,8 +124,13 @@ function App() {
       });
 
       // Separa contratos que liberam e não liberam
-      const liberam = contratosProcessados.filter(c => c.valorDisponivel > 0);
-      const naoLiberam = contratosProcessados.filter(c => c.valorDisponivel <= 0);
+      // Filtro: apenas contratos com parcela > 100 OU saldo devedor > 4000
+      const liberam = contratosProcessados.filter(c => 
+        c.valorDisponivel > 0 && (c.parcelaAtual > 100 || c.saldoDevedor > 4000)
+      );
+      const naoLiberam = contratosProcessados.filter(c => 
+        c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
+      );
 
       setContratosLiberam(liberam);
       setContratosNaoLiberam(naoLiberam);
@@ -151,6 +160,37 @@ function App() {
     
     processarAutomaticamente();
   }, [textoContratos, bancoSelecionado, bancos, processarContratos]);
+
+  // Função para copiar simulação formatada
+  const copiarSimulacao = () => {
+    if (contratosLiberam.length === 0) {
+      toast.error('Nenhum contrato disponível para copiar');
+      return;
+    }
+
+    const bancoDestino = bancos.find(b => b.codigo === bancoSelecionado);
+    const nomeBanco = bancoDestino ? bancoDestino.nome : 'Banco XP';
+
+    let texto = `*Portabilidade para o ${nomeBanco} – Renovação em 96 meses!*\n\n`;
+    texto += `📅 *Prazo para pagamento: Até 10 dias úteis*\n\n`;
+
+    contratosLiberam.forEach((contrato, index) => {
+      texto += `🔹 ${contrato.banco.toUpperCase()}\n`;
+      texto += `▫️ Parcela: R$ ${formatarMoeda(contrato.parcelaAtual)}\n`;
+      texto += `▫️ *Valor liberado aproximado: R$ ${formatarMoeda(contrato.valorDisponivel)}*\n`;
+      if (index < contratosLiberam.length - 1) {
+        texto += `\n`;
+      }
+    });
+
+    texto += `\n💵 *Total aproximado disponível: R$ ${formatarMoeda(valorLiberadoTotal)}*`;
+
+    navigator.clipboard.writeText(texto).then(() => {
+      toast.success('Simulação copiada para a área de transferência!');
+    }).catch(() => {
+      toast.error('Erro ao copiar simulação');
+    });
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
@@ -246,40 +286,11 @@ function App() {
                       <span className="text-lg font-medium text-gray-700">Valor Liberado Aproximado:</span>
                     </div>
                     <span className="text-3xl font-bold text-green-700" data-testid="valor-liberado-aproximado">
-                      R$ {calcularValorLiberadoAproximado().toFixed(2)}
+                      R$ {formatarMoeda(calcularValorLiberadoAproximado())}
                     </span>
                   </div>
                 </div>
               )}
-
-              {/* Opções: Margem ou Valor Desejado */}
-              <div className="grid md:grid-cols-2 gap-6 pt-4 border-t">
-                <div className="space-y-2">
-                  <Label htmlFor="margem" data-testid="label-margem">Informe a Margem (opcional)</Label>
-                  <Input
-                    id="margem"
-                    data-testid="input-margem"
-                    type="number"
-                    step="0.01"
-                    placeholder="Ex: 500,00"
-                    value={margemDisponivel}
-                    onChange={(e) => setMargemDisponivel(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="valor-desejado" data-testid="label-valor-desejado">OU Informe o Valor Desejado</Label>
-                  <Input
-                    id="valor-desejado"
-                    data-testid="input-valor-desejado"
-                    type="number"
-                    step="0.01"
-                    placeholder="Ex: 10.000,00"
-                    value={valorDesejado}
-                    onChange={(e) => setValorDesejado(e.target.value)}
-                  />
-                </div>
-              </div>
             </CardContent>
           </Card>
 
@@ -326,9 +337,19 @@ R$ 215,49
                     <TrendingUp className="w-6 h-6" />
                     Contratos que LIBERAM crédito
                   </CardTitle>
-                  <span className="text-2xl font-bold" data-testid="valor-total-liberado">
-                    Total: R$ {valorLiberadoTotal.toFixed(2)}
-                  </span>
+                  <div className="flex items-center gap-4">
+                    <span className="text-2xl font-bold" data-testid="valor-total-liberado">
+                      Total: R$ {formatarMoeda(valorLiberadoTotal)}
+                    </span>
+                    <Button 
+                      onClick={copiarSimulacao}
+                      className="bg-white text-green-700 hover:bg-green-50 font-semibold"
+                      data-testid="btn-copiar-simulacao"
+                    >
+                      <Copy className="w-4 h-4 mr-2" />
+                      Copiar Simulação
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="pt-6">
@@ -338,7 +359,7 @@ R$ 215,49
                       <tr className="border-b-2 border-green-300">
                         <th className="text-left py-3 px-2 font-semibold">Banco</th>
                         <th className="text-left py-3 px-2 font-semibold">Nº Contrato</th>
-                        <th className="text-center py-3 px-2 font-semibold">Prazo Total</th>
+                        <th className="text-right py-3 px-2 font-semibold">Parcela</th>
                         <th className="text-center py-3 px-2 font-semibold">Prazo Restante</th>
                         <th className="text-right py-3 px-2 font-semibold">Saldo Devedor</th>
                         <th className="text-right py-3 px-2 font-semibold">Valor Disponível</th>
@@ -349,13 +370,15 @@ R$ 215,49
                         <tr key={idx} className="border-b hover:bg-green-50" data-testid={`contrato-libera-${idx}`}>
                           <td className="py-3 px-2" data-testid={`contrato-libera-banco-${idx}`}>{c.banco}</td>
                           <td className="py-3 px-2 font-mono text-xs" data-testid={`contrato-libera-numero-${idx}`}>{c.contrato}</td>
-                          <td className="py-3 px-2 text-center" data-testid={`contrato-libera-prazo-total-${idx}`}>{c.prazoTotal}</td>
+                          <td className="py-3 px-2 text-right text-purple-700 font-bold" data-testid={`contrato-libera-parcela-${idx}`}>
+                            R$ {formatarMoeda(c.parcelaAtual)}
+                          </td>
                           <td className="py-3 px-2 text-center" data-testid={`contrato-libera-prazo-restante-${idx}`}>{c.prazoRestante}</td>
                           <td className="py-3 px-2 text-right text-blue-700 font-semibold" data-testid={`contrato-libera-saldo-${idx}`}>
-                            R$ {c.saldoDevedor.toFixed(2)}
+                            R$ {formatarMoeda(c.saldoDevedor)}
                           </td>
                           <td className="py-3 px-2 text-right text-green-700 font-bold" data-testid={`contrato-libera-valor-${idx}`}>
-                            R$ {c.valorDisponivel.toFixed(2)}
+                            R$ {formatarMoeda(c.valorDisponivel)}
                           </td>
                         </tr>
                       ))}
@@ -382,7 +405,7 @@ R$ 215,49
                       <tr className="border-b-2 border-red-300">
                         <th className="text-left py-3 px-2 font-semibold">Banco</th>
                         <th className="text-left py-3 px-2 font-semibold">Nº Contrato</th>
-                        <th className="text-center py-3 px-2 font-semibold">Prazo Total</th>
+                        <th className="text-right py-3 px-2 font-semibold">Parcela</th>
                         <th className="text-center py-3 px-2 font-semibold">Prazo Restante</th>
                         <th className="text-right py-3 px-2 font-semibold">Saldo Devedor</th>
                         <th className="text-left py-3 px-2 font-semibold">Motivo</th>
@@ -393,13 +416,18 @@ R$ 215,49
                         <tr key={idx} className="border-b hover:bg-red-50" data-testid={`contrato-nao-libera-${idx}`}>
                           <td className="py-3 px-2" data-testid={`contrato-nao-libera-banco-${idx}`}>{c.banco}</td>
                           <td className="py-3 px-2 font-mono text-xs" data-testid={`contrato-nao-libera-numero-${idx}`}>{c.contrato}</td>
-                          <td className="py-3 px-2 text-center" data-testid={`contrato-nao-libera-prazo-total-${idx}`}>{c.prazoTotal}</td>
+                          <td className="py-3 px-2 text-right text-purple-700 font-bold" data-testid={`contrato-nao-libera-parcela-${idx}`}>
+                            R$ {formatarMoeda(c.parcelaAtual)}
+                          </td>
                           <td className="py-3 px-2 text-center" data-testid={`contrato-nao-libera-prazo-restante-${idx}`}>{c.prazoRestante}</td>
                           <td className="py-3 px-2 text-right text-blue-700 font-semibold" data-testid={`contrato-nao-libera-saldo-${idx}`}>
-                            R$ {c.saldoDevedor.toFixed(2)}
+                            R$ {formatarMoeda(c.saldoDevedor)}
                           </td>
-                          <td className="py-3 px-2 text-red-700" data-testid={`contrato-nao-libera-motivo-${idx}`}>
-                            Saldo devedor maior que VP novo (R$ {c.vpNovo.toFixed(2)})
+                          <td className="py-3 px-2 text-red-700 text-sm" data-testid={`contrato-nao-libera-motivo-${idx}`}>
+                            {c.valorDisponivel <= 0 
+                              ? 'Não libera (Valor Negativo)'
+                              : 'Parcela abaixo do minimo'
+                            }
                           </td>
                         </tr>
                       ))}
