@@ -15,9 +15,11 @@ import html2canvas from 'html2canvas';
 const BACKEND_URL = process.env.REACT_APP_API_URL;
 const API = `${BACKEND_URL}/api`;
 
-// Função para formatar valores em padrão brasileiro
 const formatarMoeda = (valor) => {
-  return valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (valor === null || valor === undefined || isNaN(valor)) {
+    return '0,00';
+  }
+  return Number(valor).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 function App() {
@@ -37,6 +39,19 @@ function App() {
   const [taxaNovo, setTaxaNovo] = useState(() => localStorage.getItem('taxaNovo') || '1.80');
   const [taxaRefin, setTaxaRefin] = useState(() => localStorage.getItem('taxaRefin') || '1.50');
   const [taxaPortabilidade, setTaxaPortabilidade] = useState(() => localStorage.getItem('taxaPortabilidade') || '1.50');
+  const [cookieFullConsig, setCookieFullConsig] = useState(() => localStorage.getItem('cookieFullConsig') || '');
+  const [tipoConsulta, setTipoConsulta] = useState('cpf');
+  const [valorConsulta, setValorConsulta] = useState('');
+  const [beneficios, setBeneficios] = useState([]);
+  const [beneficioSelecionado, setBeneficioSelecionado] = useState('');
+  const [consultando, setConsultando] = useState(false);
+
+  // Preenche parcela automaticamente com margem livre
+  useEffect(() => {
+    if (margemDisponivel && margemDisponivel.trim()) {
+      setParcela(margemDisponivel.toString());
+    }
+  }, [margemDisponivel]);
 
   // Adiciona CSS para esconder botões e coluna 'Incluir' só na captura
   useEffect(() => {
@@ -175,20 +190,22 @@ function App() {
     }
   }, [textoContratos, taxaNovo, taxaRefin, taxaPortabilidade, contratosExcluidos]);
 
-  // Processa contratos automaticamente quando o texto muda
+  // Processa contratos automaticamente quando o texto muda (APENAS para entrada manual)
   useEffect(() => {
     const processarAutomaticamente = async () => {
       if (textoContratos.trim()) {
         await processarContratos();
-      } else {
-        setContratosLiberam([]);
-        setContratosNaoLiberam([]);
-        setValorLiberadoTotal(0);
       }
     };
     
     processarAutomaticamente();
   }, [textoContratos, bancoSelecionado, bancos, processarContratos]);
+
+  // Debug: monitora mudanças no contratosLiberam
+  useEffect(() => {
+    console.log('contratosLiberam mudou! Novo valor:', contratosLiberam);
+    console.log('Length:', contratosLiberam.length);
+  }, [contratosLiberam]);
 
   // Função para copiar simulação formatada
   const copiarSimulacao = () => {
@@ -234,6 +251,150 @@ function App() {
       }
       return newSet;
     });
+  };
+
+  // Consultar FullConsig
+  const consultarFullConsig = async () => {
+    if (!cookieFullConsig) {
+      toast.error('Configure o cookie nas Configurações');
+      return;
+    }
+    if (!valorConsulta) {
+      toast.error('Preencha o CPF ou Matrícula');
+      return;
+    }
+
+    // Limpa dados anteriores
+    setMargemDisponivel('');
+    setParcela('');
+    setContratosLiberam([]);
+    setContratosNaoLiberam([]);
+    setValorLiberadoTotal(0);
+    setTextoContratos('');
+    setContratosExcluidos(new Set());
+
+    setConsultando(true);
+    setBeneficios([]);
+    setBeneficioSelecionado('');
+
+    try {
+      const response = await axios.post(`${API}/consulta-fullconsig`, {
+        cookie: cookieFullConsig,
+        tipo: tipoConsulta === 'cpf' ? 'inss' : 'siape',
+        valor: valorConsulta
+      });
+
+      if (response.data.beneficios.length === 0) {
+        toast.error('Nenhum benefício encontrado');
+      } else if (response.data.beneficios.length === 1) {
+        setBeneficioSelecionado(response.data.beneficios[0].nb);
+        await consultarBeneficio(response.data.beneficios[0].nb);
+      } else {
+        setBeneficios(response.data.beneficios);
+        toast.success(`${response.data.beneficios.length} benefícios encontrados`);
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erro ao consultar');
+    } finally {
+      setConsultando(false);
+    }
+  };
+
+  // Consultar benefício específico
+  const consultarBeneficio = async (nb) => {
+    if (!cookieFullConsig) {
+      toast.error('Configure o cookie nas Configurações');
+      return;
+    }
+
+    setConsultando(true);
+
+    try {
+      const response = await axios.post(`${API}/consulta-beneficio`, {
+        cookie: cookieFullConsig,
+        tipo: 'inss',
+        valor: valorConsulta,
+        nb: nb || beneficioSelecionado
+      });
+
+      setMargemDisponivel(response.data.margem_livre.toString());
+
+      if (response.data.contratos.length > 0) {
+        const contratosValidos = response.data.contratos.filter(c => 
+          c.parcelas_total > 0 && c.saldo_devedor > 0
+        );
+
+        if (contratosValidos.length > 0) {
+          processarContratosAPI(contratosValidos);
+          toast.success(`${contratosValidos.length} contratos processados!`);
+        } else {
+          toast.info('Margem carregada, mas nenhum contrato ativo encontrado');
+        }
+      } else {
+        toast.info('Margem carregada, mas nenhum contrato encontrado');
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erro ao consultar benefício');
+    } finally {
+      setConsultando(false);
+    }
+  };
+
+  // Processa contratos vindos da API (FullConsig)
+  const processarContratosAPI = (contratos) => {
+    const taxaRefinCalc = parseFloat(taxaRefin) / 100;
+    const prazoNovo = 96;
+
+    console.log('Processando contratos da API:', contratos);
+    console.log('Taxa refin:', taxaRefin, 'Calculada:', taxaRefinCalc);
+
+    const contratosProcessados = contratos.map(c => {
+      const parcelasRestantes = c.parcelas_total - c.parcelas_pagas;
+      const saldoDevedor = c.saldo_devedor;
+      const parcelaAtual = c.valor_parcela;
+      
+      const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
+      const valorDisponivel = vpNovo - saldoDevedor;
+
+      console.log(`Contrato ${c.contrato}:`, {
+        parcelaAtual,
+        saldoDevedor,
+        vpNovo,
+        valorDisponivel,
+        parcelasRestantes
+      });
+
+      return {
+        banco: c.banco,
+        contrato: c.contrato,
+        prazoTotal: c.parcelas_total,
+        prazoRestante: parcelasRestantes,
+        saldoDevedor: saldoDevedor,
+        valorDisponivel: valorDisponivel,
+        parcelaAtual: parcelaAtual,
+        vpNovo: vpNovo
+      };
+    });
+
+    const liberam = contratosProcessados.filter(c => 
+      c.valorDisponivel > 0 && (c.parcelaAtual > 100 || c.saldoDevedor > 4000)
+    );
+    const naoLiberam = contratosProcessados.filter(c => 
+      c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
+    );
+
+    console.log('Liberam:', liberam);
+    console.log('Não liberam:', naoLiberam);
+
+    setContratosLiberam([...liberam]);
+    setContratosNaoLiberam([...naoLiberam]);
+    setContratosExcluidos(new Set());
+
+    const totalLiberado = liberam.reduce((sum, c) => sum + c.valorDisponivel, 0);
+    setValorLiberadoTotal(totalLiberado);
+    
+    console.log('Total liberado:', totalLiberado);
+    console.log('Estado atualizado - Liberam length:', liberam.length);
   };
 
   // Função para copiar simulação de margem livre
@@ -372,6 +533,19 @@ function App() {
                     placeholder="Ex: 1.50"
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cookie">Cookie FullConsig</Label>
+                  <Textarea
+                    id="cookie"
+                    rows={3}
+                    value={cookieFullConsig}
+                    onChange={(e) => {
+                      setCookieFullConsig(e.target.value);
+                      localStorage.setItem('cookieFullConsig', e.target.value);
+                    }}
+                    placeholder="Cole o cookie completo do FullConsig"
+                  />
+                </div>
                 <div className="flex gap-2 pt-4">
                   <Button onClick={() => setModalConfigAberto(false)} className="flex-1">
                     Salvar
@@ -386,6 +560,71 @@ function App() {
         )}
 
         <div className="space-y-6">
+          <Card className="shadow-xl">
+            <CardHeader>
+              <CardTitle className="text-lg">Consulta Automaticamente</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>Tipo de Consulta</Label>
+                  <Select value={tipoConsulta} onValueChange={setTipoConsulta}>
+                    <SelectTrigger className="bg-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-white">
+                      <SelectItem value="cpf">CPF</SelectItem>
+                      <SelectItem value="matricula">Matrícula</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>{tipoConsulta === 'cpf' ? 'CPF' : 'Matrícula'}</Label>
+                  <Input
+                    placeholder={tipoConsulta === 'cpf' ? '000.000.000-00' : 'Digite a matrícula'}
+                    value={valorConsulta}
+                    onChange={(e) => setValorConsulta(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>&nbsp;</Label>
+                  <Button 
+                    onClick={consultarFullConsig} 
+                    disabled={consultando}
+                    className="w-full"
+                  >
+                    {consultando ? 'Consultando...' : 'Consultar'}
+                  </Button>
+                </div>
+              </div>
+
+              {beneficios.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Selecione o Benefício</Label>
+                  <Select value={beneficioSelecionado} onValueChange={setBeneficioSelecionado}>
+                    <SelectTrigger className="bg-white">
+                      <SelectValue placeholder="Escolha um benefício" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-white">
+                      {beneficios.map((b) => (
+                        <SelectItem key={b.nb} value={b.nb}>
+                          {b.nb} - {b.descricao}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button 
+                    onClick={() => consultarBeneficio()} 
+                    disabled={!beneficioSelecionado || consultando}
+                    className="w-full mt-2"
+                  >
+                    {consultando ? 'Carregando...' : 'Carregar Dados'}
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Seção 1: Nome do Cliente */}
           <Card className="shadow-xl">
             <CardHeader>
@@ -410,7 +649,21 @@ function App() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid md:grid-cols-3 gap-6">
+              <div className="grid md:grid-cols-4 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="margem-livre" data-testid="label-margem-livre">Margem Livre (R$)</Label>
+                  <Input
+                    id="margem-livre"
+                    data-testid="input-margem-livre"
+                    type="number"
+                    step="0.01"
+                    placeholder="Ex: 37,00"
+                    value={margemDisponivel}
+                    onChange={(e) => setMargemDisponivel(e.target.value)}
+                    className="text-lg"
+                  />
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="parcela" data-testid="label-parcela">Parcela (R$)</Label>
                   <Input
@@ -482,40 +735,6 @@ function App() {
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Seção 3: Cole seus Contratos */}
-          <Card className="shadow-xl">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2" data-testid="contratos-title">
-                <Calculator className="w-5 h-5" />
-                Cole seus Contratos
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Textarea
-                data-testid="textarea-contratos"
-                placeholder="Cole aqui os contratos existentes...
-
-Exemplo:
-329 - QI SOCIEDADE DE CREDITO DIRETO S A
-QUA0001117593
-24/10/2025
-11/2025
-10/2033
-R$ 994,17
-1,50%
-R$ 215,49
-0/96 - 96 Restantes
-11.141,19"
-                className="min-h-[300px] font-mono text-sm"
-                value={textoContratos}
-                onChange={(e) => setTextoContratos(e.target.value)}
-              />
-              <p className="text-sm text-gray-500 mt-2">
-                * Os contratos serão processados automaticamente ao colar
-              </p>
             </CardContent>
           </Card>
 
@@ -651,6 +870,43 @@ R$ 215,49
               </CardContent>
             </Card>
           )}
+
+          {/* Seção 3: Cole seus Contratos */}
+          <Card className="shadow-xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2" data-testid="contratos-title">
+                <Calculator className="w-5 h-5" />
+                Cole seus Contratos
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Textarea
+                data-testid="textarea-contratos"
+                placeholder="Cole aqui os contratos existentes...
+
+Exemplo:
+329 - QI SOCIEDADE DE CREDITO DIRETO S A
+QUA0001117593
+24/10/2025
+11/2025
+10/2033
+R$ 994,17
+1,50%
+R$ 215,49
+0/96 - 96 Restantes
+11.141,19"
+                className="min-h-[300px] font-mono text-sm"
+                value={textoContratos}
+                onChange={(e) => setTextoContratos(e.target.value)}
+              />
+              <p className="text-sm text-gray-500 mt-2">
+                * Os contratos serão processados automaticamente ao colar
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Seção 4: Contratos que LIBERAM crédito - MOVIDO PARA ANTES DE NÃO LIBERAM */}
+
         </div>
       </div>
     </div>
