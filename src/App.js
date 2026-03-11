@@ -46,6 +46,11 @@ function App() {
   const [beneficioSelecionado, setBeneficioSelecionado] = useState('');
   const [consultando, setConsultando] = useState(false);
 
+  // ── NOVO: estado para portabilidade manual ──
+  const [portabilidadesManuais, setPortabilidadesManuais] = useState([
+    { banco: '', parcela: '', saldoDevedor: '' }
+  ]);
+
   // Preenche parcela automaticamente com margem livre
   useEffect(() => {
     if (margemDisponivel && margemDisponivel.trim()) {
@@ -78,7 +83,6 @@ function App() {
         const bancosData = response.data;
         setBancos(bancosData);
         
-        // Define Banrisul como padrão se existir, senão pega o primeiro
         const banrisul = bancosData.find(b => b.nome.toLowerCase().includes('banrisul'));
         if (banrisul) {
           setBancoSelecionado(banrisul.codigo);
@@ -96,17 +100,14 @@ function App() {
   // Calcula valor liberado aproximado baseado na parcela e prazo
   const calcularValorLiberadoAproximado = () => {
     if (!parcela) return 0;
-
     const taxa = parseFloat(taxaNovo) / 100;
     const n = parseInt(prazo);
     const parcelaNum = parseFloat(parcela);
-    
-    // VP = PMT × [(1 - (1 + i)^-n) / i]
     const valorLiberado = parcelaNum * ((1 - Math.pow(1 + taxa, -n)) / taxa);
     return valorLiberado;
   };
 
-  // Processa contratos
+  // Processa contratos (texto colado)
   const processarContratos = useCallback(async () => {
     try {
       const response = await axios.post(`${API}/parse-contratos`, {
@@ -123,10 +124,9 @@ function App() {
       }
 
       const taxaRefinCalc = parseFloat(taxaRefin) / 100;
-      const prazoNovo = 96; // Sempre 96 meses conforme especificação
+      const prazoNovo = 96;
 
       const contratosProcessados = contratos.map(c => {
-        // Calcula parcelas restantes
         let parcelasRestantes;
         if (c.parcelas_total && c.parcelas_pagas) {
           parcelasRestantes = parseInt(c.parcelas_total) - parseInt(c.parcelas_pagas);
@@ -136,7 +136,6 @@ function App() {
           parcelasRestantes = null;
         }
 
-        // Pega saldo devedor (quitação)
         let saldoDevedor = 0;
         if (c.quitacao) {
           saldoDevedor = parseFloat(String(c.quitacao).replace(/[^\d.,]/g, '').replace(',', '.'));
@@ -145,12 +144,7 @@ function App() {
         }
 
         const parcelaAtual = parseFloat(c.valor_parcela) || 0;
-        
-        // Calcula VP do novo contrato (96 meses, taxa refin, mantém a parcela)
-        // VP = PMT × [(1 - (1 + i)^-n) / i]
         const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
-        
-        // Valor disponível/liberado = VP novo - Saldo devedor
         const valorDisponivel = vpNovo - saldoDevedor;
 
         return {
@@ -165,8 +159,6 @@ function App() {
         };
       });
 
-      // Separa contratos que liberam e não liberam
-      // Filtro: apenas contratos com parcela > 100 OU saldo devedor > 4000
       const liberam = contratosProcessados.filter(c => 
         c.valorDisponivel > 0 && (c.parcelaAtual > 100 || c.saldoDevedor > 4000)
       );
@@ -174,10 +166,10 @@ function App() {
         c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
       );
 
-      setContratosLiberam(liberam);
-      setContratosNaoLiberam(naoLiberam);
+      // Mantém manuais existentes ao reprocessar texto
+      setContratosLiberam(prev => [...liberam, ...prev.filter(c => c.isManual)]);
+      setContratosNaoLiberam(prev => [...naoLiberam, ...prev.filter(c => c.isManual)]);
 
-      // Calcula valor total liberado (excluindo contratos desmarcados)
       const totalLiberado = liberam
         .filter((c, idx) => !contratosExcluidos.has(`libera-${idx}`))
         .reduce((sum, c) => sum + c.valorDisponivel, 0);
@@ -190,24 +182,114 @@ function App() {
     }
   }, [textoContratos, taxaNovo, taxaRefin, taxaPortabilidade, contratosExcluidos]);
 
-  // Processa contratos automaticamente quando o texto muda (APENAS para entrada manual)
   useEffect(() => {
     const processarAutomaticamente = async () => {
       if (textoContratos.trim()) {
         await processarContratos();
       }
     };
-    
     processarAutomaticamente();
   }, [textoContratos, bancoSelecionado, bancos, processarContratos]);
 
-  // Debug: monitora mudanças no contratosLiberam
   useEffect(() => {
     console.log('contratosLiberam mudou! Novo valor:', contratosLiberam);
     console.log('Length:', contratosLiberam.length);
   }, [contratosLiberam]);
 
-  // Função para copiar simulação formatada
+  // ── NOVO: funções para portabilidade manual ──
+  const adicionarLinhaManual = () => {
+    setPortabilidadesManuais(prev => [...prev, { banco: '', parcela: '', saldoDevedor: '' }]);
+  };
+
+  const removerLinhaManual = (idx) => {
+    setPortabilidadesManuais(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const atualizarLinhaManual = (idx, campo, valor) => {
+    setPortabilidadesManuais(prev =>
+      prev.map((linha, i) => i === idx ? { ...linha, [campo]: valor } : linha)
+    );
+  };
+
+  const calcularPortabilidadesManual = () => {
+    const taxaRefinCalc = parseFloat(taxaRefin) / 100;
+    const prazoNovo = 96;
+
+    const linhasValidas = portabilidadesManuais.filter(
+      l => l.banco.trim() && l.parcela && l.saldoDevedor
+    );
+
+    if (linhasValidas.length === 0) {
+      toast.error('Preencha ao menos uma linha com Banco, Parcela e Saldo Devedor');
+      return;
+    }
+
+    const parseMoeda = (v) => {
+      // Remove pontos de milhar, troca vírgula decimal por ponto
+      // Suporta: "9.867,52" → 9867.52 | "9867,52" → 9867.52 | "9867.52" → 9867.52
+      const s = String(v).trim();
+      // Se tem vírgula, assume formato pt-BR: remove pontos de milhar, troca vírgula
+      if (s.includes(',')) {
+        return parseFloat(s.replace(/\./g, '').replace(',', '.'));
+      }
+      // Sem vírgula: pode ser "9867.52" (decimal EN) ou "9867" — parseFloat direto
+      return parseFloat(s);
+    };
+
+    const novosContratos = linhasValidas.map((l, idx) => {
+      const parcelaAtual = parseMoeda(l.parcela);
+      const saldoDevedor = parseMoeda(l.saldoDevedor);
+      const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
+      const valorDisponivel = vpNovo - saldoDevedor;
+
+      return {
+        banco: l.banco,
+        contrato: `--`,
+        prazoTotal: prazoNovo,
+        prazoRestante: prazoNovo,
+        saldoDevedor,
+        valorDisponivel,
+        parcelaAtual,
+        vpNovo,
+        isManual: true
+      };
+    });
+
+    const liberam = novosContratos.filter(c =>
+      c.valorDisponivel > 0 && (c.parcelaAtual > 100 || c.saldoDevedor > 4000)
+    );
+    const naoLiberam = novosContratos.filter(c =>
+      c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
+    );
+
+    // Substitui manuais antigos, preserva os do texto colado
+    setContratosLiberam(prev => [...prev.filter(c => !c.isManual), ...liberam]);
+    setContratosNaoLiberam(prev => [...prev.filter(c => !c.isManual), ...naoLiberam]);
+    setContratosExcluidos(new Set());
+
+    // Recalcula total com os novos
+    setContratosLiberam(prev => {
+      const todos = [...prev.filter(c => !c.isManual), ...liberam];
+      const total = todos.reduce((sum, c) => sum + c.valorDisponivel, 0);
+      setValorLiberadoTotal(total);
+      return todos;
+    });
+
+    if (liberam.length > 0) {
+      toast.success(`${liberam.length} portabilidade(s) manual(is) libera(m) crédito!`);
+    } else {
+      toast.info('Nenhuma portabilidade manual libera crédito com esses valores.');
+    }
+  };
+
+  // Recalcula total quando contratosExcluidos muda
+  useEffect(() => {
+    const total = contratosLiberam
+      .filter((_, idx) => !contratosExcluidos.has(`libera-${idx}`))
+      .reduce((sum, c) => sum + c.valorDisponivel, 0);
+    setValorLiberadoTotal(total);
+  }, [contratosExcluidos, contratosLiberam]);
+
   const copiarSimulacao = () => {
     if (contratosLiberam.length === 0) {
       toast.error('Nenhum contrato disponível para copiar');
@@ -240,7 +322,6 @@ function App() {
     });
   };
 
-  // Função para toggle incluir/excluir contrato do cálculo
   const toggleContratoExcluido = (id) => {
     setContratosExcluidos(prev => {
       const newSet = new Set(prev);
@@ -253,7 +334,6 @@ function App() {
     });
   };
 
-  // Consultar FullConsig
   const consultarFullConsig = async () => {
     if (!cookieFullConsig) {
       toast.error('Configure o cookie nas Configurações');
@@ -264,7 +344,6 @@ function App() {
       return;
     }
 
-    // Limpa dados anteriores
     setMargemDisponivel('');
     setParcela('');
     setContratosLiberam([]);
@@ -272,6 +351,7 @@ function App() {
     setValorLiberadoTotal(0);
     setTextoContratos('');
     setContratosExcluidos(new Set());
+    setPortabilidadesManuais([{ banco: '', parcela: '', saldoDevedor: '' }]);
 
     setConsultando(true);
     setBeneficios([]);
@@ -300,7 +380,6 @@ function App() {
     }
   };
 
-  // Consultar benefício específico
   const consultarBeneficio = async (nb) => {
     if (!cookieFullConsig) {
       toast.error('Configure o cookie nas Configurações');
@@ -340,13 +419,9 @@ function App() {
     }
   };
 
-  // Processa contratos vindos da API (FullConsig)
   const processarContratosAPI = (contratos) => {
     const taxaRefinCalc = parseFloat(taxaRefin) / 100;
     const prazoNovo = 96;
-
-    console.log('Processando contratos da API:', contratos);
-    console.log('Taxa refin:', taxaRefin, 'Calculada:', taxaRefinCalc);
 
     const contratosProcessados = contratos.map(c => {
       const parcelasRestantes = c.parcelas_total - c.parcelas_pagas;
@@ -355,14 +430,6 @@ function App() {
       
       const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
       const valorDisponivel = vpNovo - saldoDevedor;
-
-      console.log(`Contrato ${c.contrato}:`, {
-        parcelaAtual,
-        saldoDevedor,
-        vpNovo,
-        valorDisponivel,
-        parcelasRestantes
-      });
 
       return {
         banco: c.banco,
@@ -383,21 +450,14 @@ function App() {
       c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
     );
 
-    console.log('Liberam:', liberam);
-    console.log('Não liberam:', naoLiberam);
-
     setContratosLiberam([...liberam]);
     setContratosNaoLiberam([...naoLiberam]);
     setContratosExcluidos(new Set());
 
     const totalLiberado = liberam.reduce((sum, c) => sum + c.valorDisponivel, 0);
     setValorLiberadoTotal(totalLiberado);
-    
-    console.log('Total liberado:', totalLiberado);
-    console.log('Estado atualizado - Liberam length:', liberam.length);
   };
 
-  // Função para copiar simulação de margem livre
   const copiarSimulacaoMargem = () => {
     if (!parcela || !prazo) {
       toast.error('Preencha a parcela e o prazo');
@@ -420,7 +480,6 @@ function App() {
     });
   };
 
-  // Função para copiar imagem do espelho da oferta sem botões e sem coluna 'Incluir'
   const copiarImagemEspelho = () => {
     const wrapper = document.getElementById('espelho-oferta');
     if (!wrapper) {
@@ -560,6 +619,7 @@ function App() {
         )}
 
         <div className="space-y-6">
+          {/* Consulta Automática */}
           <Card className="shadow-xl">
             <CardHeader>
               <CardTitle className="text-lg">Consulta Automaticamente</CardTitle>
@@ -625,7 +685,7 @@ function App() {
             </CardContent>
           </Card>
 
-          {/* Seção 1: Nome do Cliente */}
+          {/* Nome do Cliente */}
           <Card className="shadow-xl">
             <CardHeader>
               <CardTitle className="text-lg" data-testid="nome-cliente-title">Nome do Cliente (Opcional)</CardTitle>
@@ -641,7 +701,7 @@ function App() {
             </CardContent>
           </Card>
 
-          {/* Seção 2: Simulação de Margem */}
+          {/* Simulação de Margem */}
           <Card className="shadow-xl">
             <CardHeader>
               <CardTitle className="text-2xl text-center" data-testid="simulacao-margem-title">
@@ -711,7 +771,6 @@ function App() {
                 </div>
               </div>
 
-              {/* Valor Liberado Aproximado */}
               {parcela && (
                 <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-6 rounded-lg border-2 border-green-300">
                   <div className="flex items-center justify-between">
@@ -738,7 +797,7 @@ function App() {
             </CardContent>
           </Card>
 
-          {/* Seção 4: Contratos que LIBERAM crédito */}
+          {/* Contratos que LIBERAM crédito */}
           {contratosLiberam.length > 0 && (
             <Card className="shadow-xl border-green-400">
               <div id="espelho-oferta">
@@ -790,7 +849,7 @@ function App() {
                         const contratoId = `libera-${idx}`;
                         const isExcluido = contratosExcluidos.has(contratoId);
                         return (
-                        <tr key={idx} className={`border-b hover:bg-green-50 ${isExcluido ? 'opacity-50' : ''}`} data-testid={`contrato-libera-${idx}`}>
+                        <tr key={idx} className={`border-b hover:bg-green-50 ${isExcluido ? 'opacity-50' : ''} ${c.isManual ? 'bg-blue-50' : ''}`} data-testid={`contrato-libera-${idx}`}>
                           <td className="py-3 px-2 text-center">
                             <input
                               type="checkbox"
@@ -799,7 +858,9 @@ function App() {
                               className="w-4 h-4 cursor-pointer"
                             />
                           </td>
-                          <td className="py-3 px-2" data-testid={`contrato-libera-banco-${idx}`}>{c.banco}</td>
+                          <td className="py-3 px-2" data-testid={`contrato-libera-banco-${idx}`}>
+                            {c.banco}
+                          </td>
                           <td className="py-3 px-2 font-mono text-xs" data-testid={`contrato-libera-numero-${idx}`}>{c.contrato}</td>
                           <td className="py-3 px-2 text-right text-purple-700 font-bold" data-testid={`contrato-libera-parcela-${idx}`}>
                             R$ {formatarMoeda(c.parcelaAtual)}
@@ -822,7 +883,7 @@ function App() {
             </Card>
           )}
 
-          {/* Seção 5: Contratos que NÃO LIBERAM crédito */}
+          {/* Contratos que NÃO LIBERAM crédito */}
           {contratosNaoLiberam.length > 0 && (
             <Card className="shadow-xl border-red-400">
               <CardHeader className="bg-gradient-to-r from-red-600 to-rose-600 text-white">
@@ -847,7 +908,9 @@ function App() {
                     <tbody>
                       {contratosNaoLiberam.map((c, idx) => (
                         <tr key={idx} className="border-b hover:bg-red-50" data-testid={`contrato-nao-libera-${idx}`}>
-                          <td className="py-3 px-2" data-testid={`contrato-nao-libera-banco-${idx}`}>{c.banco}</td>
+                          <td className="py-3 px-2" data-testid={`contrato-nao-libera-banco-${idx}`}>
+                            {c.banco}
+                          </td>
                           <td className="py-3 px-2 font-mono text-xs" data-testid={`contrato-nao-libera-numero-${idx}`}>{c.contrato}</td>
                           <td className="py-3 px-2 text-right text-purple-700 font-bold" data-testid={`contrato-nao-libera-parcela-${idx}`}>
                             R$ {formatarMoeda(c.parcelaAtual)}
@@ -871,7 +934,7 @@ function App() {
             </Card>
           )}
 
-          {/* Seção 3: Cole seus Contratos */}
+          {/* Cole seus Contratos */}
           <Card className="shadow-xl">
             <CardHeader>
               <CardTitle className="flex items-center gap-2" data-testid="contratos-title">
@@ -905,7 +968,92 @@ R$ 215,49
             </CardContent>
           </Card>
 
-          {/* Seção 4: Contratos que LIBERAM crédito - MOVIDO PARA ANTES DE NÃO LIBERAM */}
+          {/* ── NOVO: Simular Portabilidade Manual ── */}
+          <Card className="shadow-xl border-blue-300">
+            <CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-200">
+              <CardTitle className="flex items-center gap-2 text-blue-800">
+                <TrendingUp className="w-5 h-5 text-blue-600" />
+                Simular Portabilidade
+                <span className="text-sm font-normal text-blue-500 ml-1">(entrada manual)</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-5 space-y-3">
+              {/* Cabeçalho das colunas */}
+              <div className="grid grid-cols-12 gap-2 px-1">
+                <div className="col-span-5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Banco</div>
+                <div className="col-span-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Parcela (R$)</div>
+                <div className="col-span-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Saldo Devedor (R$)</div>
+                <div className="col-span-1"></div>
+              </div>
+
+              {/* Linhas de entrada */}
+              {portabilidadesManuais.map((linha, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-5">
+                    <Input
+                      placeholder="Ex: Banco PAN"
+                      value={linha.banco}
+                      onChange={e => atualizarLinhaManual(idx, 'banco', e.target.value)}
+                      className="bg-white"
+                    />
+                  </div>
+                  <div className="col-span-3">
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="249,76"
+                      value={linha.parcela}
+                      onChange={e => atualizarLinhaManual(idx, 'parcela', e.target.value)}
+                      className="bg-white"
+                    />
+                  </div>
+                  <div className="col-span-3">
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="9.867,52"
+                      value={linha.saldoDevedor}
+                      onChange={e => atualizarLinhaManual(idx, 'saldoDevedor', e.target.value)}
+                      className="bg-white"
+                    />
+                  </div>
+                  <div className="col-span-1 flex justify-center">
+                    {portabilidadesManuais.length > 1 && (
+                      <button
+                        onClick={() => removerLinhaManual(idx)}
+                        className="text-red-400 hover:text-red-600 text-xl font-bold leading-none w-7 h-7 flex items-center justify-center rounded hover:bg-red-50"
+                        title="Remover linha"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {/* Botões */}
+              <div className="flex gap-3 pt-1">
+                <Button
+                  variant="outline"
+                  onClick={adicionarLinhaManual}
+                  className="flex-1 border-blue-300 text-blue-700 hover:bg-blue-50"
+                >
+                  + Adicionar Contrato
+                </Button>
+                <Button
+                  onClick={calcularPortabilidadesManual}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  <Calculator className="w-4 h-4 mr-2" />
+                  Calcular Portabilidade
+                </Button>
+              </div>
+
+              <p className="text-xs text-gray-400 pt-1">
+                * Prazo fixo de 96 meses · Taxa de Refinanciamento: <strong>{taxaRefin}% a.m.</strong> · Os resultados são adicionados à lista acima
+              </p>
+            </CardContent>
+          </Card>
 
         </div>
       </div>
