@@ -27,7 +27,6 @@ function App() {
   const [parcela, setParcela] = useState('');
   const [prazo, setPrazo] = useState('96');
   const [margemDisponivel, setMargemDisponivel] = useState('');
-  const [valorDesejado, setValorDesejado] = useState('');
   const [textoContratos, setTextoContratos] = useState('');
   const [bancos, setBancos] = useState([]);
   const [bancoSelecionado, setBancoSelecionado] = useState('');
@@ -465,8 +464,6 @@ function App() {
     }
 
     const valorLiberado = calcularValorLiberadoAproximado();
-    const bancoDestino = bancos.find(b => b.codigo === bancoSelecionado);
-    const nomeBanco = bancoDestino ? bancoDestino.nome : 'Banco';
 
     let texto = `*Simulação de Margem Livre*\n\n`;
     texto += `💵 *Parcela:* R$ ${formatarMoeda(parseFloat(parcela))}\n`;
