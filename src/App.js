@@ -1,19 +1,23 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
-import axios from 'axios';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
-import { Textarea } from './components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
+import { Textarea } from './components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
 import { Calculator, TrendingUp, TrendingDown, Copy, Settings } from 'lucide-react';
 import html2canvas from 'html2canvas';
 
-const BACKEND_URL = process.env.REACT_APP_API_URL;
-const API = `${BACKEND_URL}/api`;
+const BANCOS = [
+  { codigo: '623', nome: 'Banco PAN', taxa_portabilidade: 1.60, taxa_refin: 1.74, taxa_novo: 1.987 },
+  { codigo: '336', nome: 'Banco C6', taxa_portabilidade: 1.60, taxa_refin: 1.74, taxa_novo: 1.987 },
+  { codigo: '041', nome: 'Banrisul', taxa_portabilidade: 1.60, taxa_refin: 1.74, taxa_novo: 1.987 },
+  { codigo: '184', nome: 'Qualibank', taxa_portabilidade: 1.60, taxa_refin: 1.74, taxa_novo: 1.987 },
+  { codigo: '070', nome: 'BRB', taxa_portabilidade: 1.60, taxa_refin: 1.74, taxa_novo: 1.987 },
+];
 
 const formatarMoeda = (valor) => {
   if (valor === null || valor === undefined || isNaN(valor)) {
@@ -22,14 +26,239 @@ const formatarMoeda = (valor) => {
   return Number(valor).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+const calcularParcela = (valor, taxaMensal, prazo) => {
+  if (taxaMensal === 0) {
+    return valor / prazo;
+  }
+  const taxa = taxaMensal / 100;
+  const parcela = valor * (taxa * Math.pow(1 + taxa, prazo)) / (Math.pow(1 + taxa, prazo) - 1);
+  return Math.round(parcela * 100) / 100;
+};
+
+const calcularSaldoDevedor = (valorContrato, taxaMensal, parcelasPagas, parcelasTotal) => {
+  if (parcelasPagas >= parcelasTotal) {
+    return 0.0;
+  }
+  const taxa = taxaMensal / 100;
+  const parcelasRestantes = parcelasTotal - parcelasPagas;
+  if (taxa === 0) {
+    return valorContrato * (parcelasRestantes / parcelasTotal);
+  }
+  const parcela = calcularParcela(valorContrato, taxaMensal, parcelasTotal);
+  const saldo = parcela * ((Math.pow(1 + taxa, parcelasRestantes) - 1) / (taxa * Math.pow(1 + taxa, parcelasRestantes)));
+  return Math.round(saldo * 100) / 100;
+};
+
+const parseContratos = (texto) => {
+  const contratos = [];
+  const valorPattern = /R\$\s*([\d.,]+)/;
+  const taxaPattern = /([\d,]+)%/;
+  const parcelasPatternRestantes = /(\d+)\/(\d+)\s*-\s*(\d+)\s+Restantes?/;
+  const parcelasPatternSimples = /(\d+)\/(\d+)/;
+  const linhasOriginais = texto.split('\n');
+  let formatoTabular = false;
+
+  for (let linha of linhasOriginais) {
+    linha = linha.trim();
+    if (!linha || linha.startsWith('Banco') || linha.includes('Contrato')) {
+      continue;
+    }
+
+    if (linha.includes('\t')) {
+      formatoTabular = true;
+      try {
+        const campos = linha.split('\t').map(c => c.trim()).filter(c => c);
+        const bancoMatch = linha.match(/^(\d+)\s*[-–]\s*(.+)/);
+        if (!bancoMatch || campos.length < 10) {
+          continue;
+        }
+
+        const codigoBanco = bancoMatch[1];
+        const nomeBanco = bancoMatch[2].trim();
+        const banco = `${codigoBanco} - ${nomeBanco}`;
+        const contrato = campos[1];
+        const averbacao = campos[2] || '';
+        const inicio = campos[3] || '';
+        const final = campos[4] || '';
+
+        let valorContrato = 0.0;
+        let valorMatch = linha.match(valorPattern);
+        if (!valorMatch) {
+          valorMatch = campos[5].match(/([\d.,]+)/);
+        }
+        if (valorMatch) {
+          valorContrato = parseFloat(valorMatch[1].replace(/\./g, '').replace(',', '.'));
+        }
+
+        let taxa = 1.5;
+        let taxaMatch = campos[6].match(taxaPattern);
+        if (!taxaMatch) {
+          taxaMatch = campos[6].match(/([\d,]+)/);
+        }
+        if (taxaMatch) {
+          taxa = parseFloat(taxaMatch[1].replace(',', '.'));
+        }
+
+        let parcela = 0.0;
+        let parcelaMatch = campos[7].match(valorPattern);
+        if (!parcelaMatch) {
+          parcelaMatch = campos[7].match(/([\d.,]+)/);
+        }
+        if (parcelaMatch) {
+          parcela = parseFloat(parcelaMatch[1].replace(/\./g, '').replace(',', '.'));
+        }
+
+        let parcelasPagas = 0;
+        let parcelasTotal = 96;
+        let parcelasMatch = campos[8].match(parcelasPatternRestantes);
+        if (parcelasMatch) {
+          parcelasPagas = parseInt(parcelasMatch[1]);
+          parcelasTotal = parseInt(parcelasMatch[2]);
+        } else {
+          const parcelasSimple = campos[8].match(parcelasPatternSimples);
+          if (parcelasSimple) {
+            parcelasPagas = parseInt(parcelasSimple[1]);
+            parcelasTotal = parseInt(parcelasSimple[2]);
+          }
+        }
+
+        let quitacao = 0.0;
+        let quitacaoMatch = campos[9].match(valorPattern);
+        if (!quitacaoMatch) {
+          quitacaoMatch = campos[9].match(/([\d.,]+)/);
+        }
+        if (quitacaoMatch) {
+          quitacao = parseFloat(quitacaoMatch[1].replace(/\./g, '').replace(',', '.'));
+        }
+
+        const saldoDevedor = calcularSaldoDevedor(valorContrato, taxa, parcelasPagas, parcelasTotal);
+
+        contratos.push({
+          banco,
+          contrato,
+          averbacao,
+          inicio_desconto: inicio,
+          final_desconto: final,
+          valor_contrato: valorContrato,
+          taxa,
+          valor_parcela: parcela,
+          parcelas_pagas: parcelasPagas,
+          parcelas_total: parcelasTotal,
+          quitacao,
+          saldo_devedor: saldoDevedor
+        });
+      } catch (e) {
+        continue;
+      }
+    }
+  }
+
+  if (!formatoTabular) {
+    const linhas = [];
+    for (let linha of linhasOriginais) {
+      const linhaLimpa = linha.trim();
+      if ((linhaLimpa && !linhaLimpa.startsWith('Banco') && !linhaLimpa.includes('Contrato')) || /^[3-9]/.test(linhaLimpa)) {
+        linhas.push(linhaLimpa);
+      }
+    }
+
+    const bancoPattern = /^(\d+)\s*[-–]\s*(.+)$/;
+    let i = 0;
+    while (i < linhas.length) {
+      const linha = linhas[i];
+      const bancoMatch = linha.match(bancoPattern);
+      if (bancoMatch) {
+        try {
+          const campos = [linha];
+          let j = i + 1;
+          while (j < linhas.length && !linhas[j].match(bancoPattern)) {
+            if (linhas[j].trim()) {
+              campos.push(linhas[j].trim());
+            }
+            j++;
+          }
+
+          if (campos.length >= 10) {
+            const codigoBanco = bancoMatch[1];
+            const nomeBanco = bancoMatch[2].trim();
+            const banco = `${codigoBanco} - ${nomeBanco}`;
+            const contrato = campos[1];
+            const averbacao = campos[2] || '';
+            const inicio = campos[3] || '';
+            const final = campos[4] || '';
+
+            let valorContrato = 0.0;
+            const valorMatch = campos[5].match(valorPattern);
+            if (valorMatch) {
+              valorContrato = parseFloat(valorMatch[1].replace(/\./g, '').replace(',', '.'));
+            }
+
+            let taxa = 1.5;
+            const taxaMatch = campos[6].match(taxaPattern);
+            if (taxaMatch) {
+              taxa = parseFloat(taxaMatch[1].replace(',', '.'));
+            }
+
+            let parcela = 0.0;
+            const parcelaMatch = campos[7].match(valorPattern);
+            if (parcelaMatch) {
+              parcela = parseFloat(parcelaMatch[1].replace(/\./g, '').replace(',', '.'));
+            }
+
+            let parcelasPagas = 0;
+            let parcelasTotal = 96;
+            const parcelasMatch = campos[8].match(parcelasPatternSimples);
+            if (parcelasMatch) {
+              parcelasPagas = parseInt(parcelasMatch[1]);
+              parcelasTotal = parseInt(parcelasMatch[2]);
+            }
+
+            let quitacao = 0.0;
+            let quitacaoMatch = campos[9].match(valorPattern);
+            if (!quitacaoMatch) {
+              quitacaoMatch = campos[9].match(/([\d.,]+)/);
+            }
+            if (quitacaoMatch) {
+              quitacao = parseFloat(quitacaoMatch[1].replace(/\./g, '').replace(',', '.'));
+            }
+
+            const saldoDevedor = calcularSaldoDevedor(valorContrato, taxa, parcelasPagas, parcelasTotal);
+
+            contratos.push({
+              banco,
+              contrato,
+              averbacao,
+              inicio_desconto: inicio,
+              final_desconto: final,
+              valor_contrato: valorContrato,
+              taxa,
+              valor_parcela: parcela,
+              parcelas_pagas: parcelasPagas,
+              parcelas_total: parcelasTotal,
+              quitacao,
+              saldo_devedor: saldoDevedor
+            });
+          }
+          i = j;
+        } catch (e) {
+          i++;
+        }
+      } else {
+        i++;
+      }
+    }
+  }
+
+  return contratos;
+};
+
 function App() {
   const [nomeCliente, setNomeCliente] = useState('');
   const [parcela, setParcela] = useState('');
   const [prazo, setPrazo] = useState('96');
   const [margemDisponivel, setMargemDisponivel] = useState('');
   const [textoContratos, setTextoContratos] = useState('');
-  const [bancos, setBancos] = useState([]);
-  const [bancoSelecionado, setBancoSelecionado] = useState('');
+  const [bancoSelecionado, setBancoSelecionado] = useState(BANCOS[2]?.codigo || '041');
   const [contratosLiberam, setContratosLiberam] = useState([]);
   const [contratosNaoLiberam, setContratosNaoLiberam] = useState([]);
   const [valorLiberadoTotal, setValorLiberadoTotal] = useState(0);
@@ -38,26 +267,72 @@ function App() {
   const [taxaNovo, setTaxaNovo] = useState(() => localStorage.getItem('taxaNovo') || '1.80');
   const [taxaRefin, setTaxaRefin] = useState(() => localStorage.getItem('taxaRefin') || '1.50');
   const [taxaPortabilidade, setTaxaPortabilidade] = useState(() => localStorage.getItem('taxaPortabilidade') || '1.50');
-  const [cookieFullConsig, setCookieFullConsig] = useState(() => localStorage.getItem('cookieFullConsig') || '');
-  const [tipoConsulta, setTipoConsulta] = useState('cpf');
-  const [valorConsulta, setValorConsulta] = useState('');
-  const [beneficios, setBeneficios] = useState([]);
-  const [beneficioSelecionado, setBeneficioSelecionado] = useState('');
-  const [consultando, setConsultando] = useState(false);
+  const [portabilidadesManuais, setPortabilidadesManuais] = useState([{ banco: '', parcela: '', saldoDevedor: '' }]);
 
-  // ── NOVO: estado para portabilidade manual ──
-  const [portabilidadesManuais, setPortabilidadesManuais] = useState([
-    { banco: '', parcela: '', saldoDevedor: '' }
-  ]);
+  const processarContratos = useCallback(() => {
+    const contratosRaw = parseContratos(textoContratos);
+    if (!contratosRaw || contratosRaw.length === 0) {
+      return;
+    }
 
-  // Preenche parcela automaticamente com margem livre
+    const taxaRefinCalc = parseFloat(taxaRefin) / 100;
+    const prazoNovo = 96;
+
+    const contratosProcessados = contratosRaw.map(c => {
+      let parcelasRestantes;
+      if (c.parcelas_total && c.parcelas_pagas) {
+        parcelasRestantes = c.parcelas_total - c.parcelas_pagas;
+      } else if (c.parcelas_restantes) {
+        parcelasRestantes = c.parcelas_restantes;
+      } else {
+        parcelasRestantes = null;
+      }
+
+      let saldoDevedor = 0;
+      if (c.quitacao) {
+        saldoDevedor = parseFloat(String(c.quitacao).replace(/[^\d.,]/g, '').replace(',', '.'));
+      } else if (c.saldo_devedor) {
+        saldoDevedor = c.saldo_devedor;
+      }
+
+      const parcelaAtual = parseFloat(c.valor_parcela) || 0;
+      const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
+      const valorDisponivel = vpNovo - saldoDevedor;
+
+      return {
+        banco: c.banco,
+        contrato: c.contrato,
+        prazoTotal: c.parcelas_total || '—',
+        prazoRestante: parcelasRestantes || '—',
+        saldoDevedor: saldoDevedor,
+        valorDisponivel: valorDisponivel,
+        parcelaAtual: parcelaAtual,
+        vpNovo: vpNovo
+      };
+    });
+
+    const liberam = contratosProcessados.filter(c => 
+      c.valorDisponivel > 0 && (c.parcelaAtual > 100 || c.saldoDevedor > 4000)
+    );
+    const naoLiberam = contratosProcessados.filter(c => 
+      c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
+    );
+
+    setContratosLiberam(prev => [...liberam, ...prev.filter(c => c.isManual)]);
+    setContratosNaoLiberam(prev => [...naoLiberam, ...prev.filter(c => c.isManual)]);
+
+    const totalLiberado = liberam.reduce((sum, c) => sum + c.valorDisponivel, 0);
+    setValorLiberadoTotal(totalLiberado);
+
+    toast.success(`${contratosRaw.length} contrato(s) processado(s)`);
+  }, [textoContratos, taxaRefin]);
+
   useEffect(() => {
     if (margemDisponivel && margemDisponivel.trim()) {
       setParcela(margemDisponivel.toString());
     }
   }, [margemDisponivel]);
 
-  // Adiciona CSS para esconder botões e coluna 'Incluir' só na captura
   useEffect(() => {
     if (!document.getElementById('print-espelho-style')) {
       const style = document.createElement('style');
@@ -74,29 +349,23 @@ function App() {
     }
   }, []);
 
-  // Carrega bancos ao iniciar
   useEffect(() => {
-    const carregarBancos = async () => {
-      try {
-        const response = await axios.get(`${API}/bancos`);
-        const bancosData = response.data;
-        setBancos(bancosData);
-        
-        const banrisul = bancosData.find(b => b.nome.toLowerCase().includes('banrisul'));
-        if (banrisul) {
-          setBancoSelecionado(banrisul.codigo);
-        } else if (bancosData.length > 0) {
-          setBancoSelecionado(bancosData[0].codigo);
-        }
-      } catch (error) {
-        toast.error('Erro ao carregar bancos');
-      }
-    };
-    
-    carregarBancos();
-  }, []);
+    if (textoContratos.trim()) {
+      processarContratos();
+    }
+  }, [textoContratos, bancoSelecionado, processarContratos]);
 
-  // Calcula valor liberado aproximado baseado na parcela e prazo
+  useEffect(() => {
+    const total = contratosLiberam.reduce((sum, c, idx) => {
+      const id = `libera-${idx}`;
+      if (!contratosExcluidos.has(id)) {
+        return sum + c.valorDisponivel;
+      }
+      return sum;
+    }, 0);
+    setValorLiberadoTotal(total);
+  }, [contratosLiberam, contratosExcluidos]);
+
   const calcularValorLiberadoAproximado = () => {
     if (!parcela) return 0;
     const taxa = parseFloat(taxaNovo) / 100;
@@ -104,357 +373,6 @@ function App() {
     const parcelaNum = parseFloat(parcela);
     const valorLiberado = parcelaNum * ((1 - Math.pow(1 + taxa, -n)) / taxa);
     return valorLiberado;
-  };
-
-  // Processa contratos (texto colado)
-  const processarContratos = useCallback(async () => {
-    try {
-      const response = await axios.post(`${API}/parse-contratos`, {
-        texto: textoContratos,
-        taxa_novo: parseFloat(taxaNovo),
-        taxa_refin: parseFloat(taxaRefin),
-        taxa_portabilidade: parseFloat(taxaPortabilidade)
-      });
-
-      const contratos = response.data;
-      
-      if (!contratos || contratos.length === 0) {
-        return;
-      }
-
-      const taxaRefinCalc = parseFloat(taxaRefin) / 100;
-      const prazoNovo = 96;
-
-      const contratosProcessados = contratos.map(c => {
-        let parcelasRestantes;
-        if (c.parcelas_total && c.parcelas_pagas) {
-          parcelasRestantes = parseInt(c.parcelas_total) - parseInt(c.parcelas_pagas);
-        } else if (c.parcelas_restantes) {
-          parcelasRestantes = parseInt(c.parcelas_restantes);
-        } else {
-          parcelasRestantes = null;
-        }
-
-        let saldoDevedor = 0;
-        if (c.quitacao) {
-          saldoDevedor = parseFloat(String(c.quitacao).replace(/[^\d.,]/g, '').replace(',', '.'));
-        } else if (c.saldo_devedor) {
-          saldoDevedor = parseFloat(c.saldo_devedor);
-        }
-
-        const parcelaAtual = parseFloat(c.valor_parcela) || 0;
-        const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
-        const valorDisponivel = vpNovo - saldoDevedor;
-
-        return {
-          banco: c.banco,
-          contrato: c.contrato,
-          prazoTotal: c.parcelas_total || '—',
-          prazoRestante: parcelasRestantes || '—',
-          saldoDevedor: saldoDevedor,
-          valorDisponivel: valorDisponivel,
-          parcelaAtual: parcelaAtual,
-          vpNovo: vpNovo
-        };
-      });
-
-      const liberam = contratosProcessados.filter(c => 
-        c.valorDisponivel > 0 && (c.parcelaAtual > 100 || c.saldoDevedor > 4000)
-      );
-      const naoLiberam = contratosProcessados.filter(c => 
-        c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
-      );
-
-      // Mantém manuais existentes ao reprocessar texto
-      setContratosLiberam(prev => [...liberam, ...prev.filter(c => c.isManual)]);
-      setContratosNaoLiberam(prev => [...naoLiberam, ...prev.filter(c => c.isManual)]);
-
-      const totalLiberado = liberam
-        .filter((c, idx) => !contratosExcluidos.has(`libera-${idx}`))
-        .reduce((sum, c) => sum + c.valorDisponivel, 0);
-      setValorLiberadoTotal(totalLiberado);
-
-      toast.success(`${contratos.length} contrato(s) processado(s)`);
-    } catch (error) {
-      console.error('Erro ao processar contratos:', error);
-      toast.error('Erro ao processar contratos');
-    }
-  }, [textoContratos, taxaNovo, taxaRefin, taxaPortabilidade, contratosExcluidos]);
-
-  useEffect(() => {
-    const processarAutomaticamente = async () => {
-      if (textoContratos.trim()) {
-        await processarContratos();
-      }
-    };
-    processarAutomaticamente();
-  }, [textoContratos, bancoSelecionado, bancos, processarContratos]);
-
-  useEffect(() => {
-    console.log('contratosLiberam mudou! Novo valor:', contratosLiberam);
-    console.log('Length:', contratosLiberam.length);
-  }, [contratosLiberam]);
-
-  // ── NOVO: funções para portabilidade manual ──
-  const adicionarLinhaManual = () => {
-    setPortabilidadesManuais(prev => [...prev, { banco: '', parcela: '', saldoDevedor: '' }]);
-  };
-
-  const removerLinhaManual = (idx) => {
-    setPortabilidadesManuais(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const atualizarLinhaManual = (idx, campo, valor) => {
-    setPortabilidadesManuais(prev =>
-      prev.map((linha, i) => i === idx ? { ...linha, [campo]: valor } : linha)
-    );
-  };
-
-  const calcularPortabilidadesManual = () => {
-    const taxaRefinCalc = parseFloat(taxaRefin) / 100;
-    const prazoNovo = 96;
-
-    const linhasValidas = portabilidadesManuais.filter(
-      l => l.banco.trim() && l.parcela && l.saldoDevedor
-    );
-
-    if (linhasValidas.length === 0) {
-      toast.error('Preencha ao menos uma linha com Banco, Parcela e Saldo Devedor');
-      return;
-    }
-
-    const parseMoeda = (v) => {
-      // Remove pontos de milhar, troca vírgula decimal por ponto
-      // Suporta: "9.867,52" → 9867.52 | "9867,52" → 9867.52 | "9867.52" → 9867.52
-      const s = String(v).trim();
-      // Se tem vírgula, assume formato pt-BR: remove pontos de milhar, troca vírgula
-      if (s.includes(',')) {
-        return parseFloat(s.replace(/\./g, '').replace(',', '.'));
-      }
-      // Sem vírgula: pode ser "9867.52" (decimal EN) ou "9867" — parseFloat direto
-      return parseFloat(s);
-    };
-
-    const novosContratos = linhasValidas.map((l, idx) => {
-      const parcelaAtual = parseMoeda(l.parcela);
-      const saldoDevedor = parseMoeda(l.saldoDevedor);
-      const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
-      const valorDisponivel = vpNovo - saldoDevedor;
-
-      return {
-        banco: l.banco,
-        contrato: `--`,
-        prazoTotal: prazoNovo,
-        prazoRestante: prazoNovo,
-        saldoDevedor,
-        valorDisponivel,
-        parcelaAtual,
-        vpNovo,
-        isManual: true
-      };
-    });
-
-    const liberam = novosContratos.filter(c =>
-      c.valorDisponivel > 0 && (c.parcelaAtual > 100 || c.saldoDevedor > 4000)
-    );
-    const naoLiberam = novosContratos.filter(c =>
-      c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
-    );
-
-    // Substitui manuais antigos, preserva os do texto colado
-    setContratosLiberam(prev => [...prev.filter(c => !c.isManual), ...liberam]);
-    setContratosNaoLiberam(prev => [...prev.filter(c => !c.isManual), ...naoLiberam]);
-    setContratosExcluidos(new Set());
-
-    // Recalcula total com os novos
-    setContratosLiberam(prev => {
-      const todos = [...prev.filter(c => !c.isManual), ...liberam];
-      const total = todos.reduce((sum, c) => sum + c.valorDisponivel, 0);
-      setValorLiberadoTotal(total);
-      return todos;
-    });
-
-    if (liberam.length > 0) {
-      toast.success(`${liberam.length} portabilidade(s) manual(is) libera(m) crédito!`);
-    } else {
-      toast.info('Nenhuma portabilidade manual libera crédito com esses valores.');
-    }
-  };
-
-  // Recalcula total quando contratosExcluidos muda
-  useEffect(() => {
-    const total = contratosLiberam
-      .filter((_, idx) => !contratosExcluidos.has(`libera-${idx}`))
-      .reduce((sum, c) => sum + c.valorDisponivel, 0);
-    setValorLiberadoTotal(total);
-  }, [contratosExcluidos, contratosLiberam]);
-
-  const copiarSimulacao = () => {
-    if (contratosLiberam.length === 0) {
-      toast.error('Nenhum contrato disponível para copiar');
-      return;
-    }
-
-    const bancoDestino = bancos.find(b => b.codigo === bancoSelecionado);
-    const nomeBanco = bancoDestino ? bancoDestino.nome : 'Banco Banrisul';
-
-    let texto = `*Portabilidade para o ${nomeBanco} – Renovação em 96 meses!*\n\n`;
-    texto += `📅 *Prazo para pagamento: Até 10 dias úteis*\n\n`;
-
-    const contratosIncluidos = contratosLiberam.filter((c, idx) => !contratosExcluidos.has(`libera-${idx}`));
-
-    contratosIncluidos.forEach((contrato, index) => {
-      texto += `🔹 ${contrato.banco.toUpperCase()}\n`;
-      texto += `▫️ Parcela: R$ ${formatarMoeda(contrato.parcelaAtual)}\n`;
-      texto += `▫️ *Valor liberado aproximado: R$ ${formatarMoeda(contrato.valorDisponivel)}*\n`;
-      if (index < contratosIncluidos.length - 1) {
-        texto += `\n`;
-      }
-    });
-
-    texto += `\n💵 *Total aproximado disponível: R$ ${formatarMoeda(valorLiberadoTotal)}*`;
-
-    navigator.clipboard.writeText(texto).then(() => {
-      toast.success('Simulação copiada para a área de transferência!');
-    }).catch(() => {
-      toast.error('Erro ao copiar simulação');
-    });
-  };
-
-  const toggleContratoExcluido = (id) => {
-    setContratosExcluidos(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
-  };
-
-  const consultarFullConsig = async () => {
-    if (!cookieFullConsig) {
-      toast.error('Configure o cookie nas Configurações');
-      return;
-    }
-    if (!valorConsulta) {
-      toast.error('Preencha o CPF ou Matrícula');
-      return;
-    }
-
-    setMargemDisponivel('');
-    setParcela('');
-    setContratosLiberam([]);
-    setContratosNaoLiberam([]);
-    setValorLiberadoTotal(0);
-    setTextoContratos('');
-    setContratosExcluidos(new Set());
-    setPortabilidadesManuais([{ banco: '', parcela: '', saldoDevedor: '' }]);
-
-    setConsultando(true);
-    setBeneficios([]);
-    setBeneficioSelecionado('');
-
-    try {
-      const response = await axios.post(`${API}/consulta-fullconsig`, {
-        cookie: cookieFullConsig,
-        tipo: tipoConsulta === 'cpf' ? 'inss' : 'siape',
-        valor: valorConsulta
-      });
-
-      if (response.data.beneficios.length === 0) {
-        toast.error('Nenhum benefício encontrado');
-      } else if (response.data.beneficios.length === 1) {
-        setBeneficioSelecionado(response.data.beneficios[0].nb);
-        await consultarBeneficio(response.data.beneficios[0].nb);
-      } else {
-        setBeneficios(response.data.beneficios);
-        toast.success(`${response.data.beneficios.length} benefícios encontrados`);
-      }
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'Erro ao consultar');
-    } finally {
-      setConsultando(false);
-    }
-  };
-
-  const consultarBeneficio = async (nb) => {
-    if (!cookieFullConsig) {
-      toast.error('Configure o cookie nas Configurações');
-      return;
-    }
-
-    setConsultando(true);
-
-    try {
-      const response = await axios.post(`${API}/consulta-beneficio`, {
-        cookie: cookieFullConsig,
-        tipo: 'inss',
-        valor: valorConsulta,
-        nb: nb || beneficioSelecionado
-      });
-
-      setMargemDisponivel(response.data.margem_livre.toString());
-
-      if (response.data.contratos.length > 0) {
-        const contratosValidos = response.data.contratos.filter(c => 
-          c.parcelas_total > 0 && c.saldo_devedor > 0
-        );
-
-        if (contratosValidos.length > 0) {
-          processarContratosAPI(contratosValidos);
-          toast.success(`${contratosValidos.length} contratos processados!`);
-        } else {
-          toast.info('Margem carregada, mas nenhum contrato ativo encontrado');
-        }
-      } else {
-        toast.info('Margem carregada, mas nenhum contrato encontrado');
-      }
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'Erro ao consultar benefício');
-    } finally {
-      setConsultando(false);
-    }
-  };
-
-  const processarContratosAPI = (contratos) => {
-    const taxaRefinCalc = parseFloat(taxaRefin) / 100;
-    const prazoNovo = 96;
-
-    const contratosProcessados = contratos.map(c => {
-      const parcelasRestantes = c.parcelas_total - c.parcelas_pagas;
-      const saldoDevedor = c.saldo_devedor;
-      const parcelaAtual = c.valor_parcela;
-      
-      const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
-      const valorDisponivel = vpNovo - saldoDevedor;
-
-      return {
-        banco: c.banco,
-        contrato: c.contrato,
-        prazoTotal: c.parcelas_total,
-        prazoRestante: parcelasRestantes,
-        saldoDevedor: saldoDevedor,
-        valorDisponivel: valorDisponivel,
-        parcelaAtual: parcelaAtual,
-        vpNovo: vpNovo
-      };
-    });
-
-    const liberam = contratosProcessados.filter(c => 
-      c.valorDisponivel > 0 && (c.parcelaAtual > 100 || c.saldoDevedor > 4000)
-    );
-    const naoLiberam = contratosProcessados.filter(c => 
-      c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
-    );
-
-    setContratosLiberam([...liberam]);
-    setContratosNaoLiberam([...naoLiberam]);
-    setContratosExcluidos(new Set());
-
-    const totalLiberado = liberam.reduce((sum, c) => sum + c.valorDisponivel, 0);
-    setValorLiberadoTotal(totalLiberado);
   };
 
   const copiarSimulacaoMargem = () => {
@@ -466,9 +384,9 @@ function App() {
     const valorLiberado = calcularValorLiberadoAproximado();
 
     let texto = `*Simulação de Margem Livre*\n\n`;
-    texto += `💵 *Parcela:* R$ ${formatarMoeda(parseFloat(parcela))}\n`;
-    texto += `📅 *Prazo:* ${prazo} meses\n`;
-    texto += `🟢 *Valor Liberado Aproximado: R$ ${formatarMoeda(valorLiberado)}*`;
+    texto += `*Parcela:* R$ ${formatarMoeda(parseFloat(parcela))}\n`;
+    texto += `*Prazo:* ${prazo} meses\n`;
+    texto += `*Valor Liberado Aproximado: R$ ${formatarMoeda(valorLiberado)}*`;
 
     navigator.clipboard.writeText(texto).then(() => {
       toast.success('Simulação de margem copiada!');
@@ -514,11 +432,135 @@ function App() {
     });
   };
 
+  const copiarSimulacao = () => {
+    const bancoDestino = BANCOS.find(b => b.codigo === bancoSelecionado);
+    const nomeBanco = bancoDestino ? bancoDestino.nome : 'Banco';
+
+    let texto = `*Simulação de Crédito Consignado*\n\n`;
+    texto += `*Nome:* ${nomeCliente || 'Cliente'}\n`;
+    texto += `*Banco:* ${nomeBanco}\n`;
+    texto += `*Prazo:* ${prazo} meses\n\n`;
+
+    if (nomeCliente) {
+      texto += `*Margem Disponível:* R$ ${formatarMoeda(parseFloat(margemDisponivel) || 0)}\n`;
+      texto += `*Parcela Total:* R$ ${formatarMoeda(parseFloat(parcela))}\n`;
+      texto += `*Valor Liberado:* R$ ${formatarMoeda(valorLiberadoTotal)}\n\n`;
+    }
+
+    if (contratosLiberam.length > 0) {
+      texto += `*Contratos que LIBERAM:*\n`;
+      contratosLiberam.forEach((c, idx) => {
+        const id = `libera-${idx}`;
+        if (!contratosExcluidos.has(id)) {
+          texto += `- ${c.banco}\n`;
+          texto += `  Contrato: ${c.contrato}\n`;
+          texto += `  Parcela: R$ ${formatarMoeda(c.parcelaAtual)}\n`;
+          texto += `  Saldo: R$ ${formatarMoeda(c.saldoDevedor)}\n`;
+          texto += `  Libera: R$ ${formatarMoeda(c.valorDisponivel)}\n\n`;
+        }
+      });
+    }
+
+    if (contratosNaoLiberam.length > 0) {
+      texto += `*Contratos que NAO LIBERAM:*\n`;
+      contratosNaoLiberam.forEach((c) => {
+        texto += `- ${c.banco} (${c.contrato}) - R$ ${formatarMoeda(c.parcelaAtual)}\n`;
+      });
+    }
+
+    navigator.clipboard.writeText(texto).then(() => {
+      toast.success('Simulação copiada!');
+    }).catch(() => {
+      toast.error('Erro ao copiar');
+    });
+  };
+
+  const toggleContratoExcluido = (id) => {
+    setContratosExcluidos(prev => {
+      const novo = new Set(prev);
+      if (novo.has(id)) {
+        novo.delete(id);
+      } else {
+        novo.add(id);
+      }
+      return novo;
+    });
+  };
+
+  const adicionarLinhaManual = () => {
+    setPortabilidadesManuais(prev => [...prev, { banco: '', parcela: '', saldoDevedor: '' }]);
+  };
+
+  const removerLinhaManual = (idx) => {
+    setPortabilidadesManuais(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const atualizarLinhaManual = (idx, campo, valor) => {
+    setPortabilidadesManuais(prev =>
+      prev.map((linha, i) => i === idx ? { ...linha, [campo]: valor } : linha)
+    );
+  };
+
+  const calcularPortabilidadesManual = () => {
+    const taxaRefinCalc = parseFloat(taxaRefin) / 100;
+    const prazoNovo = 96;
+
+    const linhasValidas = portabilidadesManuais.filter(
+      l => l.banco.trim() && l.parcela && l.saldoDevedor
+    );
+
+    if (linhasValidas.length === 0) {
+      toast.error('Preencha ao menos uma linha com Banco, Parcela e Saldo Devedor');
+      return;
+    }
+
+    const parseMoeda = (v) => {
+      const s = String(v).trim();
+      if (s.includes(',')) {
+        return parseFloat(s.replace(/\./g, '').replace(',', '.'));
+      }
+      return parseFloat(s);
+    };
+
+    const novosContratos = linhasValidas.map((l) => {
+      const parcelaAtual = parseMoeda(l.parcela);
+      const saldoDevedor = parseMoeda(l.saldoDevedor);
+      const vpNovo = parcelaAtual * ((1 - Math.pow(1 + taxaRefinCalc, -prazoNovo)) / taxaRefinCalc);
+      const valorDisponivel = vpNovo - saldoDevedor;
+
+      return {
+        banco: l.banco,
+        contrato: `--`,
+        prazoTotal: prazoNovo,
+        prazoRestante: prazoNovo,
+        saldoDevedor,
+        valorDisponivel,
+        parcelaAtual,
+        vpNovo,
+        isManual: true
+      };
+    });
+
+    const liberam = novosContratos.filter(c =>
+      c.valorDisponivel > 0 && (c.parcelaAtual > 100 || c.saldoDevedor > 4000)
+    );
+    const naoLiberam = novosContratos.filter(c =>
+      c.valorDisponivel <= 0 || (c.parcelaAtual <= 100 && c.saldoDevedor <= 4000)
+    );
+
+    setContratosLiberam(prev => [...prev.filter(c => !c.isManual), ...liberam]);
+    setContratosNaoLiberam(prev => [...prev.filter(c => !c.isManual), ...naoLiberam]);
+
+    const totalLiberado = liberam.reduce((sum, c) => sum + c.valorDisponivel, 0);
+    setValorLiberadoTotal(prev => prev + totalLiberado);
+
+    toast.success(`${liberam.length} portabilidade(s) calculada(s)`);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
       <Toaster />
       <div className="container mx-auto px-4 py-8 max-w-7xl">
-        {/* Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-4 mb-3">
             <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent" data-testid="main-heading">
@@ -536,7 +578,6 @@ function App() {
           <p className="text-gray-600 text-lg" data-testid="subtitle">Portabilidade • Refinanciamento • Margem Consignável</p>
         </div>
 
-        {/* Modal de Configurações de Taxas */}
         {modalConfigAberto && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setModalConfigAberto(false)}>
             <Card className="w-full max-w-md mx-4 bg-white" onClick={(e) => e.stopPropagation()}>
@@ -589,19 +630,6 @@ function App() {
                     placeholder="Ex: 1.50"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="cookie">Cookie FullConsig</Label>
-                  <Textarea
-                    id="cookie"
-                    rows={3}
-                    value={cookieFullConsig}
-                    onChange={(e) => {
-                      setCookieFullConsig(e.target.value);
-                      localStorage.setItem('cookieFullConsig', e.target.value);
-                    }}
-                    placeholder="Cole o cookie completo do FullConsig"
-                  />
-                </div>
                 <div className="flex gap-2 pt-4">
                   <Button onClick={() => setModalConfigAberto(false)} className="flex-1">
                     Salvar
@@ -616,73 +644,6 @@ function App() {
         )}
 
         <div className="space-y-6">
-          {/* Consulta Automática */}
-          <Card className="shadow-xl">
-            <CardHeader>
-              <CardTitle className="text-lg">Consulta Automaticamente</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid md:grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label>Tipo de Consulta</Label>
-                  <Select value={tipoConsulta} onValueChange={setTipoConsulta}>
-                    <SelectTrigger className="bg-white">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-white">
-                      <SelectItem value="cpf">CPF</SelectItem>
-                      <SelectItem value="matricula">Matrícula</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>{tipoConsulta === 'cpf' ? 'CPF' : 'Matrícula'}</Label>
-                  <Input
-                    placeholder={tipoConsulta === 'cpf' ? '000.000.000-00' : 'Digite a matrícula'}
-                    value={valorConsulta}
-                    onChange={(e) => setValorConsulta(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>&nbsp;</Label>
-                  <Button 
-                    onClick={consultarFullConsig} 
-                    disabled={consultando}
-                    className="w-full"
-                  >
-                    {consultando ? 'Consultando...' : 'Consultar'}
-                  </Button>
-                </div>
-              </div>
-
-              {beneficios.length > 0 && (
-                <div className="space-y-2">
-                  <Label>Selecione o Benefício</Label>
-                  <Select value={beneficioSelecionado} onValueChange={setBeneficioSelecionado}>
-                    <SelectTrigger className="bg-white">
-                      <SelectValue placeholder="Escolha um benefício" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-white">
-                      {beneficios.map((b) => (
-                        <SelectItem key={b.nb} value={b.nb}>
-                          {b.nb} - {b.descricao}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button 
-                    onClick={() => consultarBeneficio()} 
-                    disabled={!beneficioSelecionado || consultando}
-                    className="w-full mt-2"
-                  >
-                    {consultando ? 'Carregando...' : 'Carregar Dados'}
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Nome do Cliente */}
           <Card className="shadow-xl">
             <CardHeader>
               <CardTitle className="text-lg" data-testid="nome-cliente-title">Nome do Cliente (Opcional)</CardTitle>
@@ -698,7 +659,6 @@ function App() {
             </CardContent>
           </Card>
 
-          {/* Simulação de Margem */}
           <Card className="shadow-xl">
             <CardHeader>
               <CardTitle className="text-2xl text-center" data-testid="simulacao-margem-title">
@@ -758,7 +718,7 @@ function App() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-white">
-                      {bancos.map(b => (
+                      {BANCOS.map(b => (
                         <SelectItem key={b.codigo} value={b.codigo} data-testid={`option-banco-${b.codigo}`}>
                           {b.nome}
                         </SelectItem>
@@ -794,7 +754,6 @@ function App() {
             </CardContent>
           </Card>
 
-          {/* Contratos que LIBERAM crédito */}
           {contratosLiberam.length > 0 && (
             <Card className="shadow-xl border-green-400">
               <div id="espelho-oferta">
@@ -880,7 +839,6 @@ function App() {
             </Card>
           )}
 
-          {/* Contratos que NÃO LIBERAM crédito */}
           {contratosNaoLiberam.length > 0 && (
             <Card className="shadow-xl border-red-400">
               <CardHeader className="bg-gradient-to-r from-red-600 to-rose-600 text-white">
@@ -931,7 +889,6 @@ function App() {
             </Card>
           )}
 
-          {/* Cole seus Contratos */}
           <Card className="shadow-xl">
             <CardHeader>
               <CardTitle className="flex items-center gap-2" data-testid="contratos-title">
@@ -965,7 +922,6 @@ R$ 215,49
             </CardContent>
           </Card>
 
-          {/* ── NOVO: Simular Portabilidade Manual ── */}
           <Card className="shadow-xl border-blue-300">
             <CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-200">
               <CardTitle className="flex items-center gap-2 text-blue-800">
@@ -975,7 +931,6 @@ R$ 215,49
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-5 space-y-3">
-              {/* Cabeçalho das colunas */}
               <div className="grid grid-cols-12 gap-2 px-1">
                 <div className="col-span-5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Banco</div>
                 <div className="col-span-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Parcela (R$)</div>
@@ -983,7 +938,6 @@ R$ 215,49
                 <div className="col-span-1"></div>
               </div>
 
-              {/* Linhas de entrada */}
               {portabilidadesManuais.map((linha, idx) => (
                 <div key={idx} className="grid grid-cols-12 gap-2 items-center">
                   <div className="col-span-5">
@@ -1028,7 +982,6 @@ R$ 215,49
                 </div>
               ))}
 
-              {/* Botões */}
               <div className="flex gap-3 pt-1">
                 <Button
                   variant="outline"
