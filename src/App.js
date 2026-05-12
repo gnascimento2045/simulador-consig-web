@@ -252,6 +252,17 @@ const parseContratos = (texto) => {
   return contratos;
 };
 
+const properCase = (str) => {
+  if (!str) return '';
+  return str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+};
+
+const extractBankName = (banco) => {
+  if (!banco) return '';
+  const match = banco.match(/^\d+\s*[-–]\s*(.+)/);
+  return match ? match[1].trim() : banco;
+};
+
 function App() {
   const [nomeCliente, setNomeCliente] = useState('');
   const [parcela, setParcela] = useState('');
@@ -383,10 +394,10 @@ function App() {
 
     const valorLiberado = calcularValorLiberadoAproximado();
 
-    let texto = `*Simulação de Margem Livre*\n\n`;
-    texto += `*Parcela:* R$ ${formatarMoeda(parseFloat(parcela))}\n`;
-    texto += `*Prazo:* ${prazo} meses\n`;
-    texto += `*Valor Liberado Aproximado: R$ ${formatarMoeda(valorLiberado)}*`;
+    let texto = `*📢 Simulação de Margem Livre*\n\n`;
+    texto += `💵 Parcela: R$ ${formatarMoeda(parseFloat(parcela))}\n`;
+    texto += `📅 Prazo: ${prazo} meses\n`;
+    texto += `*💰 Valor Liberado Aproximado: R$ ${formatarMoeda(valorLiberado)}*`;
 
     navigator.clipboard.writeText(texto).then(() => {
       toast.success('Simulação de margem copiada!');
@@ -436,37 +447,23 @@ function App() {
     const bancoDestino = BANCOS.find(b => b.codigo === bancoSelecionado);
     const nomeBanco = bancoDestino ? bancoDestino.nome : 'Banco';
 
-    let texto = `*Simulação de Crédito Consignado*\n\n`;
-    texto += `*Nome:* ${nomeCliente || 'Cliente'}\n`;
-    texto += `*Banco:* ${nomeBanco}\n`;
-    texto += `*Prazo:* ${prazo} meses\n\n`;
+    const todosContratos = [
+      ...contratosLiberam.map((c, idx) => ({ ...c, id: `libera-${idx}` })),
+      ...contratosNaoLiberam.map((c, idx) => ({ ...c, id: `naolibera-${idx}` }))
+    ];
 
-    if (nomeCliente) {
-      texto += `*Margem Disponível:* R$ ${formatarMoeda(parseFloat(margemDisponivel) || 0)}\n`;
-      texto += `*Parcela Total:* R$ ${formatarMoeda(parseFloat(parcela))}\n`;
-      texto += `*Valor Liberado:* R$ ${formatarMoeda(valorLiberadoTotal)}\n\n`;
-    }
+    let texto = `*📢 Oferta de Portabilidade para o Banco ${nomeBanco} – Renovação em 96 meses!*\n\n`;
+    texto += `📅 Prazo para pagamento: Até 10 dias úteis\n\n`;
 
-    if (contratosLiberam.length > 0) {
-      texto += `*Contratos que LIBERAM:*\n`;
-      contratosLiberam.forEach((c, idx) => {
-        const id = `libera-${idx}`;
-        if (!contratosExcluidos.has(id)) {
-          texto += `- ${c.banco}\n`;
-          texto += `  Contrato: ${c.contrato}\n`;
-          texto += `  Parcela: R$ ${formatarMoeda(c.parcelaAtual)}\n`;
-          texto += `  Saldo: R$ ${formatarMoeda(c.saldoDevedor)}\n`;
-          texto += `  Libera: R$ ${formatarMoeda(c.valorDisponivel)}\n\n`;
-        }
-      });
-    }
+    todosContratos.forEach((c) => {
+      if (c.parcelaAtual > 0 && !contratosExcluidos.has(c.id)) {
+        texto += `🔹 Banco ${properCase(extractBankName(c.banco))}\n`;
+        texto += `▫️ Parcela: R$ ${formatarMoeda(c.parcelaAtual)}\n`;
+        texto += `▫️ Valor liberado aproximado: R$ ${formatarMoeda(c.valorDisponivel)}\n\n`;
+      }
+    });
 
-    if (contratosNaoLiberam.length > 0) {
-      texto += `*Contratos que NAO LIBERAM:*\n`;
-      contratosNaoLiberam.forEach((c) => {
-        texto += `- ${c.banco} (${c.contrato}) - R$ ${formatarMoeda(c.parcelaAtual)}\n`;
-      });
-    }
+    texto += `*💵 Total aproximado disponível: R$ ${formatarMoeda(valorLiberadoTotal)}*`;
 
     navigator.clipboard.writeText(texto).then(() => {
       toast.success('Simulação copiada!');
