@@ -1,70 +1,50 @@
-# Getting Started with Create React App
+# Simulador de Crédito Consignado
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+# Teste agora mesmo
+https://simulador-consig-web.vercel.app
 
-## Available Scripts
+> **Portabilidade • Refinanciamento • Margem Consignável**
 
-In the project directory, you can run:
+## 📌 Objetivo do Projeto
 
-### `npm start`
+O simulador foi criado para facilitar e agilizar a rotina de correspondentes bancários, permitindo calcular operações de consignado de forma rápida, precisa e organizada.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### **Pré-requisitos**
 
-### `npm test`
+* Node.js (versão LTS recomendada)
+* npm ou yarn instalado
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### **Passo a passo**
 
-### `npm run build`
+```bash
+# Clone o repositório
+$ git clone https://github.com/seu-usuario/simulador-consignado.git
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+# Acesse a pasta do projeto
+$ cd simulador-consignado
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+# Instale as dependências
+$ npm install
+# ou
+$ yarn install
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+# Execute em modo de desenvolvimento
+$ npm start
+# ou
+$ yarn start
+```
 
-### `npm run eject`
+## 📄 Como Usar
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+1. Digite o nome do cliente (opcional).
+2. Preencha o valor da parcela ou margem.
+3. Escolha o prazo.
+4. Informe o banco destino.
+5. Cole os contratos no campo indicado.
+6. Gere a simulação.
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## 📚 Exemplos de Uso
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+* Simular portabilidade entre bancos.
+* Calcular valor liberado no refinanciamento.
