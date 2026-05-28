@@ -266,7 +266,7 @@ const extractBankName = (banco) => {
 function App() {
   const [nomeCliente, setNomeCliente] = useState('');
   const [parcela, setParcela] = useState('');
-  const [prazo, setPrazo] = useState('96');
+  const [prazo, setPrazo] = useState('108');
   const [margemDisponivel, setMargemDisponivel] = useState('');
   const [textoContratos, setTextoContratos] = useState('');
   const [bancoSelecionado, setBancoSelecionado] = useState(BANCOS[2]?.codigo || '041');
@@ -699,6 +699,7 @@ function App() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-white">
+                      <SelectItem value="108" data-testid="option-prazo-108">108 meses</SelectItem>
                       <SelectItem value="96" data-testid="option-prazo-96">96 meses</SelectItem>
                       <SelectItem value="84" data-testid="option-prazo-84">84 meses</SelectItem>
                       <SelectItem value="72" data-testid="option-prazo-72">72 meses</SelectItem>
