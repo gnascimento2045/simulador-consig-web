@@ -443,30 +443,34 @@ function App() {
     });
   };
 
-  const copiarSimulacao = () => {
+  const copiarTextoPortabilidade = () => {
     const bancoDestino = BANCOS.find(b => b.codigo === bancoSelecionado);
     const nomeBanco = bancoDestino ? bancoDestino.nome : 'Banco';
 
-    const todosContratos = [
-      ...contratosLiberam.map((c, idx) => ({ ...c, id: `libera-${idx}` })),
-      ...contratosNaoLiberam.map((c, idx) => ({ ...c, id: `naolibera-${idx}` }))
-    ];
+    const todosContratos = contratosLiberam.map((c, idx) => ({ ...c, id: `libera-${idx}` }));
 
-    let texto = `*📢 Oferta de Portabilidade para o Banco ${nomeBanco} – Renovação em 96 meses!*\n\n`;
+    let texto = '';
+    if (nomeCliente.trim()) {
+      texto += `👤 Cliente: ${nomeCliente.trim()}\n\n`;
+    }
+
+    texto += `📢 Oferta de Portabilidade para o Banco ${nomeBanco} – Renovação em ${prazo} meses!\n\n`;
     texto += `📅 Prazo para pagamento: Até 10 dias úteis\n\n`;
 
     todosContratos.forEach((c) => {
       if (c.parcelaAtual > 0 && !contratosExcluidos.has(c.id)) {
-        texto += `🔹 Banco ${properCase(extractBankName(c.banco))}\n`;
+        const nomeBancoTexto = extractBankName(c.banco);
+        const nomeFormatado = properCase(nomeBancoTexto);
+        texto += `🔹 ${/^banco\s/i.test(nomeBancoTexto) ? '' : 'Banco '}${nomeFormatado}\n`;
         texto += `▫️ Parcela: R$ ${formatarMoeda(c.parcelaAtual)}\n`;
         texto += `▫️ Valor liberado aproximado: R$ ${formatarMoeda(c.valorDisponivel)}\n\n`;
       }
     });
 
-    texto += `*💵 Total aproximado disponível: R$ ${formatarMoeda(valorLiberadoTotal)}*`;
+    texto += `💵 Total aproximado disponível: R$ ${formatarMoeda(valorLiberadoTotal)}`;
 
     navigator.clipboard.writeText(texto).then(() => {
-      toast.success('Simulação copiada!');
+      toast.success('Texto copiado!');
     }).catch(() => {
       toast.error('Erro ao copiar');
     });
@@ -766,12 +770,12 @@ function App() {
                       Total: R$ {formatarMoeda(valorLiberadoTotal)}
                     </span>
                     <Button 
-                      onClick={copiarSimulacao}
+                      onClick={copiarTextoPortabilidade}
                       className="bg-white text-green-700 hover:bg-green-50 font-semibold btn-copiar-simulacao"
                       data-testid="btn-copiar-simulacao"
                     >
                       <Copy className="w-4 h-4 mr-2" />
-                      Copiar Simulação
+                      Copiar Texto
                     </Button>
                     <Button
                       onClick={copiarImagemEspelho}
@@ -998,7 +1002,7 @@ R$ 215,49
               </div>
 
               <p className="text-xs text-gray-400 pt-1">
-                * Prazo fixo de 96 meses · Taxa de Refinanciamento: <strong>{taxaRefin}% a.m.</strong> · Os resultados são adicionados à lista acima
+                * Prazo fixo de {prazo} meses · Taxa de Refinanciamento: <strong>{taxaRefin}% a.m.</strong> · Os resultados são adicionados à lista acima
               </p>
             </CardContent>
           </Card>
