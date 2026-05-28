@@ -476,6 +476,30 @@ function App() {
     });
   };
 
+  const removerContrato = (numeroContrato, isManual) => {
+    if (isManual) {
+      setContratosLiberam(prev => prev.filter(c => !(c.isManual && c.contrato === numeroContrato)));
+      setContratosNaoLiberam(prev => prev.filter(c => !(c.isManual && c.contrato === numeroContrato)));
+      return;
+    }
+
+    const linhas = textoContratos.split('\n');
+    const idx = linhas.findIndex(l => l.includes(numeroContrato));
+    if (idx === -1) return;
+
+    if (linhas[idx].includes('\t')) {
+      linhas.splice(idx, 1);
+    } else {
+      let start = idx;
+      while (start > 0 && !/^\d+\s*[-–]/.test(linhas[start])) { start--; }
+      let end = idx;
+      while (end < linhas.length - 1 && !/^\d+\s*[-–]/.test(linhas[end + 1])) { end++; }
+      linhas.splice(start, end - start + 1);
+    }
+
+    setTextoContratos(linhas.join('\n'));
+  };
+
   const toggleContratoExcluido = (id) => {
     setContratosExcluidos(prev => {
       const novo = new Set(prev);
@@ -793,6 +817,7 @@ function App() {
                     <table className="w-full text-sm" data-testid="tabela-contratos-liberam">
                     <thead>
                       <tr className="border-b-2 border-green-300">
+                        <th className="text-center py-3 px-2 font-semibold w-10"></th>
                         <th className="text-center py-3 px-2 font-semibold">Incluir</th>
                         <th className="text-left py-3 px-2 font-semibold">Banco</th>
                         <th className="text-left py-3 px-2 font-semibold">Nº Contrato</th>
@@ -808,6 +833,15 @@ function App() {
                         const isExcluido = contratosExcluidos.has(contratoId);
                         return (
                         <tr key={idx} className={`border-b hover:bg-green-50 ${isExcluido ? 'opacity-50' : ''} ${c.isManual ? 'bg-blue-50' : ''}`} data-testid={`contrato-libera-${idx}`}>
+                          <td className="py-3 px-2 text-center">
+                            <button
+                              onClick={() => removerContrato(c.contrato, c.isManual)}
+                              className="text-red-400 hover:text-red-600 text-lg font-bold leading-none w-6 h-6 flex items-center justify-center rounded hover:bg-red-50"
+                              title="Remover contrato"
+                            >
+                              ×
+                            </button>
+                          </td>
                           <td className="py-3 px-2 text-center">
                             <input
                               type="checkbox"
@@ -854,6 +888,7 @@ function App() {
                   <table className="w-full text-sm" data-testid="tabela-contratos-nao-liberam">
                     <thead>
                       <tr className="border-b-2 border-red-300">
+                        <th className="text-center py-3 px-2 font-semibold w-10"></th>
                         <th className="text-left py-3 px-2 font-semibold">Banco</th>
                         <th className="text-left py-3 px-2 font-semibold">Nº Contrato</th>
                         <th className="text-right py-3 px-2 font-semibold">Parcela</th>
@@ -865,6 +900,15 @@ function App() {
                     <tbody>
                       {contratosNaoLiberam.map((c, idx) => (
                         <tr key={idx} className="border-b hover:bg-red-50" data-testid={`contrato-nao-libera-${idx}`}>
+                          <td className="py-3 px-2 text-center">
+                            <button
+                              onClick={() => removerContrato(c.contrato, c.isManual)}
+                              className="text-red-400 hover:text-red-600 text-lg font-bold leading-none w-6 h-6 flex items-center justify-center rounded hover:bg-red-50"
+                              title="Remover contrato"
+                            >
+                              ×
+                            </button>
+                          </td>
                           <td className="py-3 px-2" data-testid={`contrato-nao-libera-banco-${idx}`}>
                             {c.banco}
                           </td>
